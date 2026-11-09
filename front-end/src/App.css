@@ -1,0 +1,109 @@
+.App {
+  text-align: center;
+}
+
+.app-skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 30000;
+  padding: 0.65rem 1rem;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1b5e20;
+  font-weight: 700;
+  transform: translateY(-180%);
+  transition: transform 0.15s ease;
+}
+
+.app-skip-link:focus {
+  transform: translateY(0);
+}
+
+.app-route-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  min-height: 40vh;
+  padding: 2rem;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.app-route-fallback__spinner {
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 2px solid #cbd5e1;
+  border-top-color: #0b3b6e;
+  border-radius: 50%;
+  animation: app-route-fallback-spin 0.7s linear infinite;
+}
+
+@keyframes app-route-fallback-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+ * Dialog panel class is `.app-dialog` (not Bootstrap `.modal`, which is display:none).
+ */
+.modal-overlay > .app-dialog {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  top: auto;
+  left: auto;
+  width: auto;
+  height: auto;
+  z-index: auto;
+  overflow: auto;
+  outline: none;
+}
+
+/* Keep Bootstrap `.modal-content` from forcing full-bleed layout inside our overlays */
+.modal-overlay > .modal-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: auto;
+  max-width: min(1100px, 100%);
+  margin: 0;
+  pointer-events: auto;
+}
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+.App-header {
+  background-color: #282c34;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(10px + 2vmin);
+  color: white;
+}
+
+.App-link {
+  color: #61dafb;
+}
+
+@keyframes App-logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

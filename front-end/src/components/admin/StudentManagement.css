@@ -1,0 +1,62 @@
+@import './adminCrudTheme.css';
+
+.student-management {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  padding: 1.25rem;
+  box-sizing: border-box;
+}
+
+.student-management__header {
+  margin-bottom: 0.9rem;
+}
+
+.student-management__header h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.5rem;
+}
+
+.student-management__subtitle {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.student-management__tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 0;
+}
+
+.student-management__tab {
+  padding: 0.65rem 1.15rem;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+  border-radius: 8px 8px 0 0;
+}
+
+.student-management__tab:hover {
+  color: #334155;
+  background: #f8fafc;
+}
+
+.student-management__tab.active {
+  color: #1b5e20;
+  border-bottom-color: #2e7d32;
+  background: #eff6ff;
+}
+
+.student-management__panel {
+  min-height: 200px;
+  min-width: 0;
+}

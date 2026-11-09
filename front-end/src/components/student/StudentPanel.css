@@ -1,0 +1,431 @@
+/* Student portal — Academic Evaluation Portal palette */
+.student-panel {
+  min-height: 100vh;
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  box-sizing: border-box;
+  background-color: #e8ece9;
+  background-image: radial-gradient(circle at 1px 1px, rgba(46, 125, 50, 0.1) 1px, transparent 0);
+  background-size: 28px 28px;
+  font-family:
+    "DM Sans",
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  color: #2c3540;
+}
+
+.student-panel::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: radial-gradient(ellipse 90% 55% at 50% -25%, rgba(46, 125, 50, 0.1), transparent 55%);
+  pointer-events: none;
+}
+
+.student-panel > * {
+  position: relative;
+  z-index: 1;
+}
+
+.student-header {
+  background: linear-gradient(125deg, #2e7d32 0%, #1b5e20 100%);
+  color: white;
+  padding: 1.5rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  box-shadow: 0 8px 24px rgba(46, 125, 50, 0.2);
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.student-header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  min-width: 0;
+}
+
+.header-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.header-info span {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.logout-button {
+  padding: 0.5rem 1rem;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.logout-button:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.student-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  background: white;
+  border-bottom: 1px solid rgba(46, 125, 50, 0.12);
+  padding: 0 0.75rem;
+  box-shadow: 0 1px 0 rgba(46, 125, 50, 0.04);
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  box-sizing: border-box;
+}
+
+.tab {
+  flex: 0 0 auto;
+  padding: 0.85rem 1rem;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: #64748b;
+  white-space: nowrap;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.tab:hover {
+  color: #2e7d32;
+}
+
+.tab.active {
+  color: #2e7d32;
+  border-bottom-color: #2e7d32;
+  font-weight: 600;
+}
+
+.student-content {
+  padding: 1rem;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+@media (min-width: 480px) {
+  .student-content {
+    padding: 1.25rem;
+  }
+}
+
+@media (min-width: 768px) {
+  .student-content {
+    padding: 1.5rem 1.75rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .student-content {
+    padding: 2rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .student-header {
+    padding: 1rem 1rem;
+  }
+
+  .student-header h1 {
+    font-size: clamp(1.05rem, 4vw, 1.35rem);
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .header-info {
+    flex: 1 1 100%;
+    justify-content: space-between;
+  }
+
+  .header-info span {
+    font-size: 0.8rem;
+    line-height: 1.3;
+  }
+
+  .student-tabs {
+    padding: 0 0.5rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tab {
+    padding: 0.75rem 0.85rem;
+    font-size: 0.88rem;
+    white-space: nowrap;
+  }
+}
+
+/* Student profile shell — detail layout lives in StudentProfile.css */
+.student-profile {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.edit-button {
+  padding: 0.5rem 1.5rem;
+  background: #2e7d32;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-family: inherit;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+
+.edit-button:hover {
+  background: #1b5e20;
+}
+
+/* Shared form primitives (student profile uses StudentProfile.css for layout) */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.form-group label {
+  font-weight: 600;
+  color: #555;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.form-group input:disabled,
+.form-group select:disabled,
+.form-group textarea:disabled {
+  background-color: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.form-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.save-button {
+  padding: 0.75rem 2rem;
+  background: #2e7d32;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+
+.save-button:hover {
+  background: #1b5e20;
+}
+
+.cancel-button {
+  padding: 0.75rem 2rem;
+  background: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background 0.2s;
+}
+
+.cancel-button:hover {
+  background: #5a6268;
+}
+
+.error-message {
+  padding: 1rem;
+  background: #f8d7da;
+  color: #721c24;
+  border-radius: 5px;
+  margin-bottom: 1rem;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 3rem;
+  color: #666;
+}
+
+.loading-message {
+  text-align: center;
+  padding: 3rem;
+  color: #666;
+}
+
+/* Student Enrollments Styles */
+.student-enrollments {
+  background: white;
+  border-radius: 12px;
+  padding: 2rem;
+  border: 1px solid rgba(46, 125, 50, 0.1);
+  box-shadow: 0 4px 16px rgba(46, 125, 50, 0.08);
+}
+
+.enrollments-header {
+  margin-bottom: 2rem;
+}
+
+.enrollments-header h2 {
+  margin: 0;
+  color: #333;
+}
+
+.filters-section {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  padding: 1rem;
+  background: #f8f9fa;
+  border-radius: 5px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.filter-group label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #555;
+}
+
+.filter-group input,
+.filter-group select {
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  font-size: 0.9rem;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.apply-button,
+.clear-button {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+
+.apply-button {
+  background: #2e7d32;
+  color: white;
+}
+
+.apply-button:hover {
+  background: #1b5e20;
+}
+
+.clear-button {
+  background: #6c757d;
+  color: white;
+}
+
+.clear-button:hover {
+  background: #5a6268;
+}
+
+.enrollments-table-container {
+  overflow-x: auto;
+}
+
+.enrollments-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+}
+
+.enrollments-table th,
+.enrollments-table td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.enrollments-table th {
+  background: #f8f9fa;
+  font-weight: 600;
+  color: #555;
+}
+
+.enrollments-table tbody tr:hover {
+  background: #f8f9fa;
+}
+
+.status-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.status-enrolled {
+  background: #d1ecf1;
+  color: #0c5460;
+}
+
+.status-completed {
+  background: #d4edda;
+  color: #155724;
+}
+
+.status-dropped {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.status-failed {
+  background: #f8d7da;
+  color: #721c24;
+}

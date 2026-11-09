@@ -1,0 +1,244 @@
+/**
+ * Shared portal chrome tokens (login / landing / staff shells).
+ * Primary: Student Evaluation System logo greens (leaf + forest).
+ */
+:root {
+  --portal-primary: #2e7d32;
+  --portal-primary-dark: #1b5e20;
+  --portal-primary-soft: #4e9d40;
+  --portal-accent: #2e7d32;
+  --portal-accent-deep: #2e7d32;
+  --portal-text: #1f2937;
+  --portal-muted: #6b7280;
+  --portal-border: #e5e7eb;
+  --portal-surface: #f3f4f6;
+  --portal-card: #ffffff;
+  --portal-dot: rgba(46, 125, 50, 0.06);
+
+  --portal-font: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --portal-font-display: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* Admin aliases */
+  --admin-accent: #2e7d32;
+  --admin-accent-dark: #1b5e20;
+  --admin-accent-soft: rgba(46, 125, 50, 0.12);
+  --admin-surface: #ffffff;
+  --admin-page: var(--portal-surface);
+  --admin-border: var(--portal-border);
+  --admin-border-soft: #eef0f2;
+  --admin-text: var(--portal-text);
+  --admin-muted: var(--portal-muted);
+  --admin-danger: #c62828;
+  --admin-danger-soft: #fef2f2;
+  --admin-warn: #b45309;
+  --admin-warn-soft: #fff8e7;
+  --admin-ok: #15803d;
+  --admin-ok-soft: #ecfdf5;
+  --admin-radius: 14px;
+  --admin-radius-sm: 10px;
+  --admin-shadow: 0 12px 36px rgba(27, 94, 32, 0.1);
+  --admin-shadow-soft: 0 4px 16px rgba(27, 94, 32, 0.06);
+  --admin-font: var(--portal-font);
+}
+
+.portal-shell {
+  position: relative;
+  background-color: var(--portal-surface);
+  background-image: none;
+  font-family: var(--portal-font);
+  color: var(--portal-text);
+}
+
+.portal-shell::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: radial-gradient(
+    ellipse 90% 55% at 50% -25%,
+    rgba(46, 125, 50, 0.06),
+    transparent 55%
+  );
+  pointer-events: none;
+}
+
+.portal-shell__main {
+  /* Above the desktop sidebar so fixed modals/overlays are never covered by the rail. */
+  position: relative;
+  z-index: 20;
+}
+
+/* Green top bar actions */
+.portal-shell__main .logout-button,
+.portal-shell__main .admin-dean-portal-link,
+.portal-shell__main .dean-link-admin,
+.portal-shell__main .faculty-link-admin,
+.portal-shell__main .faculty-header .logout-button {
+  border-radius: 999px;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.15s, border-color 0.2s;
+}
+
+.portal-shell__main .logout-button:hover,
+.portal-shell__main .admin-dean-portal-link:hover,
+.portal-shell__main .dean-link-admin:hover,
+.portal-shell__main .faculty-link-admin:hover {
+  transform: translateY(-1px);
+}
+
+/* —— Portal headers: forest green bar —— */
+.portal-shell__main > .admin-header,
+.portal-shell__main > .dean-header,
+.portal-shell__main > .faculty-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  padding: 0.95rem 1.15rem;
+  min-width: 0;
+  background: linear-gradient(135deg, #2e7d32 0%, #4e9d40 55%, #2e7d32 100%);
+  border-bottom: none;
+  color: #fff;
+  box-shadow: 0 4px 18px rgba(27, 94, 32, 0.22);
+}
+
+.portal-shell__main > .admin-header h1,
+.portal-shell__main > .dean-header h1,
+.portal-shell__main > .faculty-header h1 {
+  font-family: var(--portal-font);
+  font-size: clamp(1.15rem, 2.4vw, 1.45rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #fff;
+  min-width: 0;
+  word-break: break-word;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.portal-shell__main > .faculty-header .faculty-header__brand {
+  position: relative;
+  z-index: 2;
+}
+
+.portal-shell__main > .faculty-header .faculty-header__college {
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 1.1rem;
+  letter-spacing: 0.01em;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.portal-shell__main > .faculty-header .faculty-header__sub {
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 650;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.portal-shell__main > .faculty-header .faculty-header__role-chip {
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+}
+
+.portal-shell__main .header-info,
+.portal-shell__main .faculty-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.portal-shell__main > .admin-header .admin-header__welcome,
+.portal-shell__main > .dean-header .dean-header__welcome,
+.portal-shell__main > .faculty-header .faculty-header__welcome,
+.portal-shell__main > .faculty-header .faculty-header__welcome--compact {
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 600;
+}
+
+.portal-shell__main > .admin-header .logout-button,
+.portal-shell__main > .dean-header .logout-button,
+.portal-shell__main > .faculty-header .logout-button,
+.portal-shell__main > .faculty-header .faculty-header__logout.logout-button {
+  color: #fff;
+  background: transparent;
+  border: 1.5px solid rgba(255, 255, 255, 0.75);
+  font-weight: 650;
+  border-radius: 999px;
+  padding: 0.4rem 1rem;
+}
+
+.portal-shell__main > .admin-header .logout-button:hover,
+.portal-shell__main > .dean-header .logout-button:hover,
+.portal-shell__main > .faculty-header .logout-button:hover,
+.portal-shell__main > .faculty-header .faculty-header__logout.logout-button:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: #fff;
+  color: #fff;
+}
+
+.portal-shell__main > .admin-header .admin-dean-portal-link,
+.portal-shell__main > .dean-header .dean-link-admin,
+.portal-shell__main > .faculty-header .faculty-link-admin {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 999px;
+}
+
+.portal-shell__main > .admin-header .admin-dean-portal-link:hover,
+.portal-shell__main > .dean-header .dean-link-admin:hover,
+.portal-shell__main > .faculty-header .faculty-link-admin:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.portal-shell__main > .admin-header .guide-button,
+.portal-shell__main > .dean-header .guide-button,
+.portal-shell__main > .faculty-header .guide-button {
+  color: #1b5e20;
+  background: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  font-weight: 650;
+}
+
+.portal-shell__main > .admin-header .guide-button:hover,
+.portal-shell__main > .dean-header .guide-button:hover,
+.portal-shell__main > .faculty-header .guide-button:hover {
+  background: #f0fdf4;
+  border-color: #fff;
+  color: #1b5e20;
+}
+
+@media (min-width: 768px) {
+  .portal-shell__main > .admin-header,
+  .portal-shell__main > .dean-header,
+  .portal-shell__main > .faculty-header {
+    padding: 1rem 1.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .portal-shell__main > .admin-header,
+  .portal-shell__main > .dean-header,
+  .portal-shell__main > .faculty-header {
+    padding: 1.05rem 2rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .portal-shell__main .admin-header__welcome,
+  .portal-shell__main .dean-header__welcome,
+  .portal-shell__main .faculty-header__welcome--compact {
+    display: none;
+  }
+
+  .portal-shell__main > .admin-header,
+  .portal-shell__main > .dean-header,
+  .portal-shell__main > .faculty-header {
+    padding: 0.85rem 1rem;
+  }
+}

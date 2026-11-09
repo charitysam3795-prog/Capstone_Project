@@ -1,0 +1,1448 @@
+import React, { useState, useEffect } from 'react';
+import api from '../../api/axios';
+import './CurriculumManagement.css';
+
+const CurriculumManagement = () => {
+  const [curricula, setCurricula] = useState([]);
+  const [lookupData, setLookupData] = useState({
+    programs: [],
+    subjects: [],
+    yearLevels: [],
+    semesters: [],
+    prerequisites: [],
+    corequisites: [],
+  });
+  
+  // Ensure lookupData is always an object with arrays
+  const safeLookupData = {
+    programs: Array.isArray(lookupData.programs) ? lookupData.programs : [],
+    subjects: Array.isArray(lookupData.subjects) ? 
+      // Remove duplicates based on subject_code, keeping the first occurrence
+      lookupData.subjects.filter((subject, index, self) => 
+        index === self.findIndex((s) => s.subject_code === subject.subject_code)
+      ) : [],
+    yearLevels: Array.isArray(lookupData.yearLevels) ? lookupData.yearLevels : [],
+    semesters: Array.isArray(lookupData.semesters) ? lookupData.semesters : [],
+    prerequisites: Array.isArray(lookupData.prerequisites) ? lookupData.prerequisites : [],
+    corequisites: Array.isArray(lookupData.corequisites) ? lookupData.corequisites : [],
+  };
+  // cache for individual subjects fetched on-demand when lookup data is missing
+  const [subjectCache, setSubjectCache] = useState({}); // key: subject_id -> subject object
+  const [fetchingSubjectIds, setFetchingSubjectIds] = useState({});
+
+  // Fetch full subjects list from lookup endpoint and populate cache (returns map)
+  const fetchSubjectsList = async () => {
+    try {
+      const resp = await api.get('/lookup/subjects');
+      const arr = Array.isArray(resp.data) ? resp.data : (resp.data?.subjects || []);
+      const map = {};
+      arr.forEach(s => {
+        if (!s) return;
+        const id = s.subject_id || s.id;
+        if (id !== undefined && id !== null) map[id.toString()] = s;
+      });
+      setSubjectCache(prev => ({ ...prev, ...map }));
+      return map;
+    } catch (err) {
+      console.error('Error fetching subjects list:', err);
+      return {};
+    }
+  };
+
+  // Ensure a subject id exists in the cache. If missing, fetch the lookup list (debounced per id).
+  const ensureSubjectInCache = async (subjectId) => {
+    if (!subjectId) return null;
+    const key = subjectId.toString();
+    if (subjectCache[key]) return subjectCache[key];
+    if (fetchingSubjectIds[key]) return null; // already fetching
+    setFetchingSubjectIds(prev => ({ ...prev, [key]: true }));
+    const map = await fetchSubjectsList();
+    setFetchingSubjectIds(prev => {
+      const p = { ...prev };
+      delete p[key];
+      return p;
+    });
+    return map[key] || null;
+  };
+  // caches for per-subject requisites (keyed by subject id string)
+  const [availablePrerequisites, setAvailablePrerequisites] = useState({});
+  const [availableCorequisites, setAvailableCorequisites] = useState({});
+
+  // Helper: resolve requisite's required subject id and label (subject code/name) from various shapes
+  const resolveRequisiteLabel = (requisite) => {
+    if (!requisite) return { id: null, label: '-' };
+
+    // Determine type → Prefix
+    const typeRaw = (requisite.requisite_type || requisite.type || '').toLowerCase();
+    let prefix = 'REQ:';
+    if (typeRaw === 'prerequisite') prefix = 'P:';
+    if (typeRaw === 'corequisite') prefix = 'Co:';
+
+    // Prefer nested requiredSubject
+    const nested =
+      requisite.requiredSubject ||
+      requisite.required_subject ||
+      requisite.subject ||
+      null;
+
+    if (nested?.subject_code) {
+      return {
+        id: nested.subject_id,
+        label: `${prefix} ${nested.subject_code}`
+      };
+    }
+
+    // Fallback: resolve by subject ID from lookup or cache
+    const id =
+      requisite.required_subject_id ||
+      requisite.prereq_subject_id ||
+      requisite.coreq_subject_id ||
+      requisite.requisite_id ||
+      requisite.prerequisite_id ||
+      requisite.corequisite_id;
+
+    if (id) {
+      let subject =
+        safeLookupData.subjects.find(
+          s => s.subject_id?.toString() === id.toString()
+        ) ||
+        subjectCache?.[id.toString()];
+
+      if (subject?.subject_code) {
+        return {
+          id,
+          label: `${prefix} ${subject.subject_code}`
+        };
+      }
+    }
+
+    // Final fallback
+    return {
+      id: id || null,
+      label: `${prefix} ${id ?? ''}`
+    };
+  };
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editingCurriculum, setEditingCurriculum] = useState(null);
+  
+  // For bulk add form
+  const [bulkFormData, setBulkFormData] = useState({
+    program_id: '',
+    year_level: '',
+    semester_id: '',
+  });
+  
+  // Array of subjects to add
+  const [subjectRows, setSubjectRows] = useState([
+    {
+      subject_id: '',
+      passing_grade: '',
+      custom_grade: '',
+      subject_type: '',
+      requisite_id: '',
+    }
+  ]);
+  
+  const [error, setError] = useState('');
+  const [filterProgram, setFilterProgram] = useState('');
+  const [showEditPanel, setShowEditPanel] = useState(false);
+  const [showCorequisiteModal, setShowCorequisiteModal] = useState(false);
+  const [selectedCurriculum, setSelectedCurriculum] = useState(null);
+  
+  // Co-requisite form state
+  const [corequisiteForm, setCorequisiteForm] = useState({
+    subject_id: '',
+    coreq_subject_id: '',
+  });
+
+  useEffect(() => {
+    fetchCurricula();
+    fetchLookupData();
+  }, []);
+
+  const fetchCurricula = async () => {
+    try {
+  const response = await api.get('/curriculum');
+  setCurricula(response.data);
+    } catch (error) {
+      console.error('Error fetching curriculum:', error);
+      setError('Failed to fetch curriculum');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchLookupData = async () => {
+    try {
+  const response = await api.get('/curriculum/lookup/data');
+      // Normalize lookup data: backend returns 'requisites' (mixed prerequisites/corequisites)
+      let normalizedLookup = { ...response.data };
+      if (response.data.requisites && Array.isArray(response.data.requisites)) {
+        const requisites = response.data.requisites;
+        normalizedLookup.prerequisites = requisites.filter(r => (r.requisite_type || r.type || '').toString().toLowerCase() === 'prerequisite');
+        normalizedLookup.corequisites = requisites.filter(r => (r.requisite_type || r.type || '').toString().toLowerCase() === 'corequisite');
+      }
+      setLookupData(normalizedLookup);
+      
+      // Handle prerequisites: could be Object or Array or come from mixed 'requisites'
+      const prereqSource = normalizedLookup.prerequisites || response.data.prerequisites || [];
+      if (prereqSource) {
+        let prereqsBySubject = {};
+        if (Array.isArray(prereqSource)) {
+          // If it's an array, group it by subject_id
+          prereqSource.forEach(prereq => {
+            const subjectId = prereq.subject_id?.toString();
+            if (subjectId) {
+              if (!prereqsBySubject[subjectId]) {
+                prereqsBySubject[subjectId] = [];
+              }
+              prereqsBySubject[subjectId].push(prereq);
+            }
+          });
+        } else if (typeof prereqSource === 'object') {
+          // If it's already an object keyed by subject id, use it directly
+          prereqsBySubject = prereqSource;
+        }
+        setAvailablePrerequisites(prereqsBySubject);
+      }
+
+      // Handle corequisites: could be Object or Array
+      const coreqSource = normalizedLookup.corequisites || response.data.corequisites || [];
+      if (coreqSource) {
+        let coreqsBySubject = {};
+        if (Array.isArray(coreqSource)) {
+          // If it's an array, group it by subject_id and also index by other related ids
+          coreqSource.forEach(coreq => {
+            const subjectId = coreq.subject_id?.toString();
+            const otherId = coreq.coreq_subject_id?.toString() || coreq.coreqSubjectId?.toString();
+            const requiredId = coreq.requiredSubject?.subject_id?.toString();
+
+            const indexFor = (id) => {
+              if (!id) return;
+              if (!coreqsBySubject[id]) coreqsBySubject[id] = [];
+              coreqsBySubject[id].push(coreq);
+            };
+
+            indexFor(subjectId);
+            indexFor(otherId);
+            indexFor(requiredId);
+          });
+        } else if (typeof coreqSource === 'object') {
+          coreqsBySubject = coreqSource;
+        }
+        setAvailableCorequisites(coreqsBySubject);
+      }
+    } catch (error) {
+      console.error('Error fetching lookup data:', error);
+    }
+  };
+
+  const fetchPrerequisitesForSubject = async (subjectId) => {
+    if (!subjectId) {
+      return [];
+    }
+
+    const subjectIdStr = subjectId.toString();
+    
+    
+    // Check if prerequisites are already loaded from pre-population
+    const existingPrereqs = availablePrerequisites[subjectIdStr];
+    if (existingPrereqs && existingPrereqs.length > 0) {
+      return existingPrereqs; // Return existing prerequisites
+    }
+    
+    try {
+      // First try to fetch from API
+      const response = await api.get(`/prerequisites/subject/${subjectId}`);
+      const apiPrereqs = response.data || [];
+      
+      
+      if (apiPrereqs.length > 0) {
+        setAvailablePrerequisites(prev => {
+          const updated = { ...prev, [subjectIdStr]: apiPrereqs };
+        
+          return updated;
+        });
+        return apiPrereqs;
+      }
+    } catch (error) {
+      console.error('Error fetching prerequisites from API for subject', subjectIdStr, ':', error);
+    }
+    
+    // Fallback: use prerequisites from lookup data
+    const lookupPrereqs = safeLookupData.prerequisites || [];
+    
+    const lookupPrereqsForSubject = lookupPrereqs.filter(prereq => {
+      if (!prereq) {
+        return false;
+      }
+      if (!prereq.subject_id) {
+        return false;
+      }
+      const prereqSubjectId = parseInt(prereq.subject_id);
+      const subjectIdInt = parseInt(subjectIdStr);
+      const matches = prereqSubjectId === subjectIdInt;
+      
+      return matches;
+    });
+    
+    
+    // Only update if we found prerequisites - don't overwrite with empty array
+    if (lookupPrereqsForSubject.length > 0) {
+      setAvailablePrerequisites(prev => {
+        const updated = { ...prev, [subjectIdStr]: lookupPrereqsForSubject };
+      
+        return updated;
+      });
+      return lookupPrereqsForSubject;
+    } else {
+      
+      return [];
+    }
+  };
+
+  const fetchCorequisitesForSubject = async (subjectId) => {
+    if (!subjectId) {
+      return [];
+    }
+
+    const subjectIdStr = subjectId.toString();
+    
+    
+    // Check if corequisites are already loaded from pre-population
+    const existingCoreqs = availableCorequisites[subjectIdStr];
+    if (existingCoreqs && existingCoreqs.length > 0) {
+      return existingCoreqs; // Return existing corequisites
+    }
+    
+    // Fallback: use corequisites from lookup data
+    const lookupCoreqs = safeLookupData.corequisites || [];
+    
+    
+    // Be permissive: coreq objects may have subject_id, coreq_subject_id, nested requiredSubject,
+    // or different key naming (camelCase). Match any of those fields and also allow symmetric relations
+    const subjectIdInt = parseInt(subjectIdStr);
+    const lookupCoreqsForSubject = lookupCoreqs.filter(coreq => {
+      if (!coreq) return false;
+
+      const candidates = [];
+      if (coreq.subject_id !== undefined) candidates.push(parseInt(coreq.subject_id));
+      if (coreq.coreq_subject_id !== undefined) candidates.push(parseInt(coreq.coreq_subject_id));
+      if (coreq.coreqSubjectId !== undefined) candidates.push(parseInt(coreq.coreqSubjectId));
+      if (coreq.prereq_subject_id !== undefined) candidates.push(parseInt(coreq.prereq_subject_id));
+      if (coreq.requiredSubject?.subject_id !== undefined) candidates.push(parseInt(coreq.requiredSubject.subject_id));
+      if (coreq.coreq_subject?.subject_id !== undefined) candidates.push(parseInt(coreq.coreq_subject.subject_id));
+
+      const matches = candidates.some(c => !isNaN(c) && c === subjectIdInt);
+      
+      return matches;
+    });
+    
+    
+    // Only update if we found corequisites - don't overwrite with empty array
+    if (lookupCoreqsForSubject.length > 0) {
+      setAvailableCorequisites(prev => {
+        const updated = { ...prev, [subjectIdStr]: lookupCoreqsForSubject };
+      
+        return updated;
+      });
+      return lookupCoreqsForSubject;
+    } else {
+      
+      return [];
+    }
+  };
+
+  const handleAddRow = () => {
+    setSubjectRows([...subjectRows, {
+      subject_id: '',
+      passing_grade: '',
+      custom_grade: '',
+      subject_type: '',
+      requisite_id: '',
+    }]);
+  };
+
+  const handleRemoveRow = (index) => {
+    if (subjectRows.length > 1) {
+      const newRows = subjectRows.filter((_, i) => i !== index);
+      setSubjectRows(newRows);
+    }
+  };
+
+  const handleRowChange = async (index, field, value) => {
+    const newRows = [...subjectRows];
+    newRows[index][field] = value;
+    
+    // If subject changed, fetch requisites for this subject
+    if (field === 'subject_id' && value) {
+      // For now, don't auto-select requisites - let user choose manually
+      newRows[index].requisite_id = '';
+    }
+    
+    setSubjectRows(newRows);
+  };
+
+  const handleBulkSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    // Validate bulk form data
+    if (!bulkFormData.program_id || !bulkFormData.year_level || !bulkFormData.semester_id) {
+      setError('Please fill in Program, Year Level, and Semester');
+      return;
+    }
+
+    // Filter out empty rows (rows without subject_id)
+    const validRows = subjectRows.filter(row => row.subject_id);
+
+    if (validRows.length === 0) {
+      setError('Please add at least one subject');
+      return;
+    }
+
+    try {
+      // Batch create all curriculum entries at once
+      const response = await api.post('/curriculum/batch', {
+        program_id: bulkFormData.program_id,
+        year_level: bulkFormData.year_level,
+        semester_id: bulkFormData.semester_id,
+        subjects: validRows.map(row => {
+          let finalPassingGrade = row.passing_grade;
+          
+          // If passing_grade is 'other', use the custom_grade value
+          if (row.passing_grade === 'other' && row.custom_grade) {
+            finalPassingGrade = row.custom_grade;
+          }
+          
+          return {
+            subject_id: row.subject_id,
+            passing_grade: finalPassingGrade || null,
+            subject_type: row.subject_type || null,
+            requisite_id: row.requisite_id || null,
+          };
+        })
+      });
+
+      setShowModal(false);
+      resetBulkForm();
+      fetchCurricula();
+      fetchLookupData(); // Refresh lookup data to include any new requisites
+    } catch (error) {
+      setError(error.response?.data?.message || error.response?.data?.error || 'Failed to save curriculum');
+    }
+  };
+
+  const resetBulkForm = () => {
+    setBulkFormData({
+      program_id: '',
+      year_level: '',
+      semester_id: '',
+    });
+    setSubjectRows([{
+      subject_id: '',
+      passing_grade: '',
+      custom_grade: '',
+      subject_type: '',
+      requisite_id: '',
+    }]);
+    setError('');
+  };
+
+  const handleEdit = async (curriculum) => {
+    setEditingCurriculum(curriculum);
+    setSelectedCurriculum(curriculum);
+    setBulkFormData({
+      program_id: curriculum.program_id.toString(),
+      year_level: curriculum.year_level.toString(),
+      semester_id: curriculum.semester_id.toString(),
+    });
+    setSubjectRows([{
+      subject_id: curriculum.subject_id.toString(),
+      passing_grade: curriculum.passing_grade?.toString() || '',
+      custom_grade: curriculum.custom_grade?.toString() || '',
+      subject_type: curriculum.subject_type || '',
+      requisite_id: curriculum.requisite_id?.toString() || '',
+    }]);
+    
+    // Refresh lookup data to ensure latest requisite relationships are loaded
+    await fetchLookupData();
+    
+    if (curriculum.subject_id) {
+      await fetchPrerequisitesForSubject(curriculum.subject_id);
+      await fetchCorequisitesForSubject(curriculum.subject_id);
+    }
+    
+    setShowEditPanel(true);
+  };
+
+  const handleUpdate = async (e) => {
+    if (e) e.preventDefault();
+    setError('');
+
+    const curriculumToUpdate = editingCurriculum || selectedCurriculum;
+    if (!curriculumToUpdate) return;
+
+    try {
+      const row = subjectRows[0] || {};
+      let finalPassingGrade = row.passing_grade;
+      
+      // If passing_grade is 'other', use the custom_grade value
+      if (row.passing_grade === 'other' && row.custom_grade) {
+        finalPassingGrade = row.custom_grade;
+      }
+
+      await api.put(`/curriculum/${curriculumToUpdate.curriculum_id}`, {
+        program_id: bulkFormData.program_id || curriculumToUpdate.program_id,
+        year_level: bulkFormData.year_level || curriculumToUpdate.year_level,
+        semester_id: bulkFormData.semester_id || curriculumToUpdate.semester_id,
+        subject_id: row.subject_id || curriculumToUpdate.subject_id,
+        passing_grade: finalPassingGrade ? finalPassingGrade : (curriculumToUpdate.passing_grade || null),
+        subject_type: row.subject_type || curriculumToUpdate.subject_type || null,
+        requisite_id: row.requisite_id || curriculumToUpdate.requisite_id || null,
+      });
+      setShowModal(false);
+      setShowEditPanel(false);
+      setEditingCurriculum(null);
+      setSelectedCurriculum(null);
+      resetBulkForm();
+      fetchCurricula();
+      fetchLookupData(); // Refresh lookup data to include any updated requisites
+    } catch (error) {
+      setError(error.response?.data?.message || 'Failed to update curriculum');
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this curriculum entry?')) {
+      return;
+    }
+
+    try {
+      await api.delete(`/curriculum/${id}`);
+      fetchCurricula();
+    } catch (error) {
+      setError(error.response?.data?.message || 'Failed to delete curriculum');
+    }
+  };
+
+  const handleCloseModal = () => {
+    setShowModal(false);
+    setEditingCurriculum(null);
+    resetBulkForm();
+  };
+
+  const getSubjectDetails = (subjectId) => {
+    if (!safeLookupData.subjects || !Array.isArray(safeLookupData.subjects)) {
+      return null;
+    }
+    return safeLookupData.subjects.find(s => s && s.subject_id && s.subject_id.toString() === subjectId.toString());
+  };
+
+  const handleCorequisiteSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    if (!corequisiteForm.subject_id || !corequisiteForm.coreq_subject_id) {
+      setError('Both subjects are required for co-requisite');
+      return;
+    }
+
+    if (corequisiteForm.subject_id === corequisiteForm.coreq_subject_id) {
+      setError('A subject cannot be a co-requisite of itself');
+      return;
+    }
+
+    try {
+  const response = await api.post('/corequisites', corequisiteForm);
+      setShowCorequisiteModal(false);
+      setCorequisiteForm({ subject_id: '', coreq_subject_id: '' });
+      fetchLookupData(); // Refresh lookup data to include new co-requisites
+    } catch (error) {
+      setError(error.response?.data?.message || 'Failed to create co-requisite');
+    }
+  };
+
+  const handleCloseCorequisiteModal = () => {
+    setShowCorequisiteModal(false);
+    setCorequisiteForm({ subject_id: '', coreq_subject_id: '' });
+    setError('');
+  };
+
+  // Group curricula by program and year level, then organize semesters side-by-side
+  const groupCurriculaByProgramYear = () => {
+    if (!Array.isArray(curricula) || curricula.length === 0) {
+      return [];
+    }
+    
+    const filtered = curricula.filter(
+      curriculum => curriculum && (!filterProgram || curriculum.program_id?.toString() === filterProgram)
+    );
+
+    const grouped = {};
+    
+    filtered.forEach(curriculum => {
+      if (!curriculum) return;
+      
+      const programId = curriculum.program_id;
+      const programName = curriculum.program?.program_name || curriculum.program?.program_code || 'Unknown Program';
+      const yearLevelId = curriculum.year_level?.year_level_id || curriculum.year_level;
+      // Try to get year level from relationship first, then from lookup data
+      let yearLevelName = curriculum.year_level?.year_level;
+      if (!yearLevelName && yearLevelId && safeLookupData.yearLevels) {
+        const yearLevel = safeLookupData.yearLevels.find(yl => yl.year_level_id === parseInt(yearLevelId));
+        yearLevelName = yearLevel?.year_level;
+      }
+      yearLevelName = yearLevelName || `Year ${yearLevelId}`;
+      
+      const semesterId = curriculum.semester_id;
+      // Try to get semester from relationship first, then from lookup data
+      let semesterName = curriculum.semester?.semester_name;
+      if (!semesterName && semesterId && safeLookupData.semesters) {
+        const semester = safeLookupData.semesters.find(s => s.semester_id === parseInt(semesterId));
+        semesterName = semester?.semester_name;
+      }
+      semesterName = semesterName || `Semester ${semesterId}`;
+      
+      const key = `${programId}-${yearLevelId}`;
+      
+      if (!grouped[key]) {
+        grouped[key] = {
+          programId,
+          programName,
+          yearLevelId,
+          yearLevelName,
+          semesters: {}
+        };
+      }
+      
+      if (!grouped[key].semesters[semesterId]) {
+        grouped[key].semesters[semesterId] = {
+          semesterId,
+          semesterName,
+          curricula: []
+        };
+      }
+      
+      grouped[key].semesters[semesterId].curricula.push(curriculum);
+    });
+
+    // Convert to array and sort
+    return Object.values(grouped).sort((a, b) => {
+      if (a.programName !== b.programName) {
+        return a.programName.localeCompare(b.programName);
+      }
+      return a.yearLevelName.localeCompare(b.yearLevelName);
+    });
+  };
+
+  const groupedCurricula = Array.isArray(curricula) ? groupCurriculaByProgramYear() : [];
+
+  if (loading) {
+    return <div className="loading">Loading curriculum...</div>;
+  }
+
+  return (
+    <div className="curriculum-management">
+      <div className="management-header">
+        <h2>Curriculum Management</h2>
+        <button className="add-button" onClick={() => {
+          resetBulkForm();
+          setShowModal(true);
+        }}>
+          Add Curriculum
+        </button>
+      </div>
+
+      {error && <div className="error-message">{error}</div>}
+
+      {/* Filter by Program */}
+      <div className="filter-section">
+        <label htmlFor="program-filter">Filter by Program: </label>
+        <select
+          id="program-filter"
+          value={filterProgram}
+          onChange={(e) => setFilterProgram(e.target.value)}
+          className="filter-select"
+        >
+          <option value="">All Programs</option>
+          {safeLookupData.programs.map((program) => (
+            <option key={program.program_id} value={program.program_id}>
+              {program.program_name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Display grouped tables - Year level with stacked semesters */}
+      {Array.isArray(groupedCurricula) && groupedCurricula.length > 0 ? (
+        groupedCurricula.map((yearGroup) => {
+          if (!yearGroup || !yearGroup.semesters) return null;
+          
+          const semesterIds = Object.keys(yearGroup.semesters || {}).sort((a, b) => {
+            const semA = yearGroup.semesters[a];
+            const semB = yearGroup.semesters[b];
+            if (!semA || !semB) return 0;
+            return (semA.semesterName || '').localeCompare(semB.semesterName || '');
+          });
+          
+          return (
+            <div key={`${yearGroup.programId}-${yearGroup.yearLevelId}`} className="year-group">
+              <div className="year-group-header">
+                <h2>{(yearGroup.programName || 'Unknown Program').toUpperCase()} {(yearGroup.yearLevelName || 'Unknown Year').toUpperCase()} CURRICULUM</h2>
+                <div className="year-group-actions">
+                  <button
+                    className="edit-group-button"
+                    onClick={async () => {
+                      // Get all curricula for this year group
+                      const allCurricula = [];
+                      Object.values(yearGroup.semesters).forEach(semester => {
+                        allCurricula.push(...semester.curricula);
+                      });
+                      // Refresh lookup data to ensure latest requisite relationships are loaded
+                      await fetchLookupData();
+                      // Open edit panel with first curriculum (or show bulk edit)
+                      if (allCurricula.length > 0) {
+                        setSelectedCurriculum(allCurricula[0]);
+                        setBulkFormData({
+                          program_id: yearGroup.programId?.toString() || '',
+                          year_level: yearGroup.yearLevelId?.toString() || '',
+                          semester_id: '',
+                        });
+                        setShowEditPanel(true);
+                      }
+                    }}
+                    title="Edit this curriculum group"
+                  >
+                    Edit Group
+                  </button>
+                </div>
+              </div>
+              <div className="semesters-stacked-container">
+                {semesterIds.map((semesterId) => {
+                  const semester = yearGroup.semesters[semesterId];
+                  if (!semester || !Array.isArray(semester.curricula)) return null;
+                  
+                  return (
+                    <div key={semesterId} className="semester-section">
+                      <div className="semester-section-header">
+                        <h3>{(yearGroup.yearLevelName || 'Unknown Year').toUpperCase()} - {(semester.semesterName || 'Unknown Semester').toUpperCase()}</h3>
+                        <button
+                          className="delete-semester-button"
+                          onClick={async () => {
+                            if (semester.curricula.length === 0) return;
+                            
+                            const confirmMessage = `Are you sure you want to delete all subjects in:\n\nProgram: ${yearGroup.programName}\nYear Level: ${yearGroup.yearLevelName}\nSemester: ${semester.semesterName}\n\nThis will delete ${semester.curricula.length} subject(s).\n\nThis action cannot be undone!`;
+                            
+                            if (window.confirm(confirmMessage)) {
+                              try {
+                                // Delete all curricula in this semester
+                                const deletePromises = semester.curricula.map(curriculum => 
+                                  api.delete(`/curriculum/${curriculum.curriculum_id}`)
+                                );
+                                await Promise.all(deletePromises);
+                                fetchCurricula();
+                              } catch (error) {
+                                setError(error.response?.data?.message || 'Failed to delete semester curriculum');
+                              }
+                            }
+                          }}
+                          title="Delete all subjects in this semester"
+                        >
+                          Delete Semester
+                        </button>
+                      </div>
+                      <div className="table-container">
+                        <table className="data-table semester-table">
+                          <thead>
+                            <tr>
+                              <th>Subject Code</th>
+                              <th>Pre/Co-requisite</th>
+                              <th>Description</th>
+                              <th>Units</th>
+                              <th>Hours</th>
+                              <th>Passing Grade</th>
+                              <th>Type</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {semester.curricula.length === 0 ? (
+                              <tr>
+                                <td colSpan="8" className="no-subjects">No subjects</td>
+                              </tr>
+                            ) : (
+                              semester.curricula.map((curriculum) => {
+                                if (!curriculum) return null;
+                                const subject = curriculum.subject;
+                                
+                                // Get requisite information from the single requisite relationship
+                                let preCoRequisiteDisplay = '-';
+                                // Case 1: backend provided nested requisite with requiredSubject (highest priority)
+                                if (curriculum.requisite?.requiredSubject?.subject_code) {
+                                  const requisite = curriculum.requisite;
+                                  const requisiteCode = requisite.requiredSubject.subject_code;
+                                  const requisiteType = requisite.requisite_type || '';
+                                  
+                                  if (requisiteType.toLowerCase() === 'prerequisite') {
+                                    preCoRequisiteDisplay = `P: ${requisiteCode}`;
+                                  } else if (requisiteType.toLowerCase() === 'corequisite') {
+                                    preCoRequisiteDisplay = `Co: ${requisiteCode}`;
+                                  } else {
+                                    preCoRequisiteDisplay = requisiteCode;
+                                  }
+                                } else if (curriculum.requisite_id) {
+                                  // Fallback: find requisite in lookup data. Backend may return combined `requisites`
+                                  // or separate `prerequisites` and `corequisites` arrays in the lookup payload.
+                                  const combinedLookup = (Array.isArray(safeLookupData.requisites) && safeLookupData.requisites.length)
+                                    ? safeLookupData.requisites
+                                    : [
+                                        ...(Array.isArray(safeLookupData.prerequisites) ? safeLookupData.prerequisites : []),
+                                        ...(Array.isArray(safeLookupData.corequisites) ? safeLookupData.corequisites : [])
+                                      ];
+
+                                  // Try to resolve using any known shape, and fetch subject details if missing
+                                  const requisite = combinedLookup.find(
+                                    r => (r?.requisite_id || r?.prerequisite_id || r?.corequisite_id) === parseInt(curriculum.requisite_id)
+                                  );
+
+                                  // Use the generic resolver first
+                                  const resolved = resolveRequisiteLabel(requisite || {});
+                                  if (resolved && resolved.label) {
+                                    // resolved.label may contain full code/name or a fallback like "PREREQUISITE 15"
+                                    preCoRequisiteDisplay = resolved.label;
+                                  } else if (resolved && resolved.id) {
+                                    // We have an id but couldn't find the subject in local lookup; try to fetch subjects list
+                                    // Kick off a background fetch - ensureSubjectInCache will populate cache and re-render when ready
+                                    ensureSubjectInCache(resolved.id).catch(err => console.error('ensureSubjectInCache err', err));
+
+                                    // Construct a sensible fallback label (show type if known)
+                                    const typeHint = (requisite?.requisite_type || requisite?.type || '').toLowerCase();
+                                    if (typeHint === 'prerequisite') preCoRequisiteDisplay = `P: ${resolved.id}`;
+                                    else if (typeHint === 'corequisite') preCoRequisiteDisplay = `Co: ${resolved.id}`;
+                                    else preCoRequisiteDisplay = `REQ: ${resolved.id}`;
+                                  }
+                                }
+                                
+                                return (
+                                  <tr key={curriculum.curriculum_id}>
+                                    <td>{subject?.subject_code || '-'}</td>
+                                    <td>{preCoRequisiteDisplay}</td>
+                                    <td>{subject?.subject_name || '-'}</td>
+                                    <td>{subject?.number_of_units || '-'}</td>
+                                    <td>{subject?.number_of_hrs || '-'}</td>
+                                    <td>{curriculum.passing_grade || '-'}</td>
+                                    <td>{curriculum.subject_type || '-'}</td>
+                                    <td>
+                                      <div className="action-buttons">
+                                        <button
+                                          className="edit-button"
+                                          onClick={async () => {
+                                            setSelectedCurriculum(curriculum);
+                                            setEditingCurriculum(curriculum);
+                                            setBulkFormData({
+                                              program_id: curriculum.program_id?.toString() || '',
+                                              year_level: curriculum.year_level?.toString() || '',
+                                              semester_id: curriculum.semester_id?.toString() || '',
+                                            });
+                                            setSubjectRows([{
+                                              subject_id: curriculum.subject_id?.toString() || '',
+                                              passing_grade: curriculum.passing_grade?.toString() || '',
+                                              subject_type: curriculum.subject_type || '',
+                                              prerequisite_id: curriculum.prerequisite_id?.toString() || '',
+                                            }]);
+                                            if (curriculum.subject_id) {
+                                              await fetchPrerequisitesForSubject(curriculum.subject_id);
+                                            }
+                                            setShowEditPanel(true);
+                                          }}
+                                          title="Edit this curriculum"
+                                        >
+                                          Edit
+                                        </button>
+                                        <button
+                                          className="delete-button"
+                                          onClick={async () => {
+                                            if (window.confirm(`Are you sure you want to delete this curriculum entry?\n\nSubject: ${subject?.subject_code || 'N/A'}\nProgram: ${curriculum.program?.program_name || 'N/A'}\nYear: ${curriculum.yearLevel?.year_level || 'N/A'}\nSemester: ${curriculum.semester?.semester_name || 'N/A'}`)) {
+                                              await handleDelete(curriculum.curriculum_id);
+                                            }
+                                          }}
+                                          title="Delete this curriculum"
+                                        >
+                                          Delete
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })
+      ) : (
+        <div className="no-data">No curriculum entries found. Click "Add Curriculum" to create one.</div>
+      )}
+
+
+      {showModal && (
+        <div className="modal-overlay" onClick={handleCloseModal}>
+          <div className="modal-content bulk-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{editingCurriculum ? 'Edit Curriculum' : 'Add Curriculum - Multiple Subjects'}</h3>
+              <button className="add-button" onClick={() => {
+                setShowCorequisiteModal(true);
+              }}>
+                Add Co-requisite
+              </button>
+            </div>
+            <div className="modal-form-container">
+              <form onSubmit={editingCurriculum ? handleUpdate : handleBulkSubmit}>
+              {/* Common fields for all subjects */}
+              <div className="bulk-form-header">
+                <div className="form-group">
+                  <label>Program <span className="required">*</span></label>
+                  <select
+                    value={bulkFormData.program_id}
+                    onChange={(e) => setBulkFormData({ ...bulkFormData, program_id: e.target.value })}
+                    required
+                    disabled={!!editingCurriculum}
+                  >
+                    <option value="">Select Program</option>
+                    {safeLookupData.programs.map((program) => (
+                      <option key={program.program_id} value={program.program_id}>
+                        {program.program_name} ({program.program_code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Year Level <span className="required">*</span></label>
+                  <select
+                    value={bulkFormData.year_level}
+                    onChange={(e) => setBulkFormData({ ...bulkFormData, year_level: e.target.value })}
+                    required
+                    disabled={!!editingCurriculum}
+                  >
+                    <option value="">Select Year Level</option>
+                    {safeLookupData.yearLevels.map((level) => (
+                      <option key={level.year_level_id} value={level.year_level_id}>
+                        {level.year_level}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Semester <span className="required">*</span></label>
+                  <select
+                    value={bulkFormData.semester_id}
+                    onChange={(e) => setBulkFormData({ ...bulkFormData, semester_id: e.target.value })}
+                    required
+                    disabled={!!editingCurriculum}
+                  >
+                    <option value="">Select Semester</option>
+                    {safeLookupData.semesters.map((semester) => (
+                      <option key={semester.semester_id} value={semester.semester_id}>
+                        {semester.semester_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Subjects table */}
+              <div className="subjects-table-container">
+                <table className="subjects-table">
+                  <thead>
+                    <tr>
+                      <th>Course Code</th>
+                      <th>Subject Title</th>
+                      <th>Units</th>
+                      <th>Hours</th>
+                      <th>Passing Grade</th>
+                      <th>Type</th>
+                      <th>Pre/Co-requisite</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {subjectRows.map((row, index) => {
+                      const selectedSubject = getSubjectDetails(row.subject_id);
+                      return (
+                        <tr key={index}>
+                          <td>
+                            <select
+                              value={row.subject_id}
+                              onChange={(e) => handleRowChange(index, 'subject_id', e.target.value)}
+                              required={index === 0}
+                              className="subject-select"
+                            >
+                              <option value="">Select Subject</option>
+                              {safeLookupData.subjects.map((subject) => (
+                                <option key={subject.subject_id} value={subject.subject_id}>
+                                  {subject.subject_code}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              value={selectedSubject?.subject_name || ''}
+                              readOnly
+                              className="subject-name-readonly"
+                              placeholder="Auto-filled"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              value={selectedSubject?.number_of_units || ''}
+                              readOnly
+                              className="units-readonly"
+                              placeholder="Auto-filled"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              value={selectedSubject?.number_of_hrs || ''}
+                              readOnly
+                              className="hours-readonly"
+                              placeholder="Auto-filled"
+                            />
+                          </td>
+                          <td>
+                            <div className="passing-grade-container">
+                              <select
+                                value={row.passing_grade || ''}
+                                onChange={(e) => handleRowChange(index, 'passing_grade', e.target.value)}
+                              >
+                                <option value="">Select Grade</option>
+                                <option value="50">50</option>
+                                <option value="60">60</option>
+                                <option value="70">70</option>
+                                <option value="pass">Pass</option>
+                                <option value="failed">Failed</option>
+                                <option value="other">Other (specify)</option>
+                              </select>
+                              {row.passing_grade === 'other' && (
+                                <input
+                                  type="text"
+                                  value={row.custom_grade || ''}
+                                  onChange={(e) => handleRowChange(index, 'custom_grade', e.target.value)}
+                                  placeholder="Enter grade"
+                                />
+                              )}
+                            </div>
+                          </td>
+                          <td>
+                            <select
+                              value={row.subject_type}
+                              onChange={(e) => handleRowChange(index, 'subject_type', e.target.value)}
+                            >
+                              <option value="">Select Type</option>
+                              <option value="minor">Minor</option>
+                              <option value="core">Core</option>
+                              <option value="elective subject">Elective Subject</option>
+                            </select>
+                          </td>
+                          <td>
+                            <select
+                              value={row.requisite_id}
+                              onChange={(e) => handleRowChange(index, 'requisite_id', e.target.value)}
+                            >
+                              <option value="">None</option>
+                              {(() => {
+                                // Show available requisites relevant to this subject row.
+                                const combined = (Array.isArray(safeLookupData.requisites) && safeLookupData.requisites.length)
+                                  ? safeLookupData.requisites
+                                  : [
+                                      ...(Array.isArray(safeLookupData.prerequisites) ? safeLookupData.prerequisites : []),
+                                      ...(Array.isArray(safeLookupData.corequisites) ? safeLookupData.corequisites : [])
+                                    ];
+
+                                const subjectIdForRow = (row && row.subject_id) ? row.subject_id.toString() : null;
+
+                                const isOwnerMatch = (requisite, subjectId) => {
+                                  if (!subjectId) return true; // no subject selected -> show all
+                                  const ownerCandidates = [requisite.subject_id, requisite.subjectId, requisite.owner_subject_id];
+                                  return ownerCandidates.some(c => c !== undefined && c !== null && c.toString() === subjectId);
+                                };
+
+                                const relevant = combined.filter(r => isOwnerMatch(r, subjectIdForRow));
+                                
+                                // Ensure the currently selected requisite is always included in the options
+                                if (row.requisite_id) {
+                                  const selectedRequisite = combined.find(r => {
+                                    const requisiteId = r.requisite_id || r.prerequisite_id || r.corequisite_id || r.prereq_id || r.coreq_id;
+                                    return requisiteId && requisiteId.toString() === row.requisite_id.toString();
+                                  });
+                                  if (selectedRequisite && !relevant.find(r => {
+                                    const requisiteId = r.requisite_id || r.prerequisite_id || r.corequisite_id || r.prereq_id || r.coreq_id;
+                                    return requisiteId && requisiteId.toString() === row.requisite_id.toString();
+                                  })) {
+                                    relevant.push(selectedRequisite);
+                                  }
+                                }
+
+                                return relevant.map((requisite) => {
+                                  if (!requisite) return null;
+
+                                  const requisiteId = requisite.requisite_id || requisite.prerequisite_id || requisite.corequisite_id || requisite.prereq_id || requisite.coreq_id;
+                                  const requisiteType = requisite.requisite_type || requisite.type || '';
+
+                                  const resolved = resolveRequisiteLabel(requisite);
+
+                                  return (
+                                    <option key={resolved.id || requisiteId} value={requisiteId}>
+                                      {resolved.label}
+                                    </option>
+                                  );
+                                });
+                              })()}
+                            </select>
+                          </td>
+                          <td>
+                            {subjectRows.length > 1 && (
+                              <button
+                                type="button"
+                                className="remove-row-button"
+                                onClick={() => handleRemoveRow(index)}
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {!editingCurriculum && (
+                  <button
+                    type="button"
+                    className="add-row-button"
+                    onClick={handleAddRow}
+                  >
+                    + Add Subject Row
+                  </button>
+                )}
+              </div>
+              </form>
+            </div>
+            <div className="modal-actions">
+              <button type="button" onClick={handleCloseModal}>
+                Cancel
+              </button>
+              <button type="submit" onClick={editingCurriculum ? handleUpdate : handleBulkSubmit}>
+                {editingCurriculum ? 'Update' : 'Save All Subjects'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Panel - Right Side */}
+      {showEditPanel && (
+        <div className="edit-panel-overlay" onClick={() => setShowEditPanel(false)}>
+          <div className="edit-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="edit-panel-header">
+              <h3>Edit Curriculum</h3>
+              <button className="close-panel-button" onClick={() => {
+                setShowEditPanel(false);
+                setSelectedCurriculum(null);
+              }}>
+                ×
+              </button>
+            </div>
+            
+            <div className="edit-panel-content">
+              {selectedCurriculum ? (
+                <div className="edit-single-curriculum">
+                  <h4>Edit Selected Subject</h4>
+                  <form onSubmit={async (e) => {
+                    e.preventDefault();
+                    await handleUpdate(e);
+                    setShowEditPanel(false);
+                    setSelectedCurriculum(null);
+                  }}>
+                    <div className="form-group">
+                      <label>Program <span className="required">*</span></label>
+                      <select
+                        value={bulkFormData.program_id || selectedCurriculum.program_id}
+                        onChange={(e) => setBulkFormData({ ...bulkFormData, program_id: e.target.value })}
+                        required
+                      >
+                        <option value="">Select Program</option>
+                        {safeLookupData.programs.map((program) => (
+                          <option key={program.program_id} value={program.program_id}>
+                            {program.program_name} ({program.program_code})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Year Level <span className="required">*</span></label>
+                      <select
+                        value={bulkFormData.year_level || selectedCurriculum.year_level}
+                        onChange={(e) => setBulkFormData({ ...bulkFormData, year_level: e.target.value })}
+                        required
+                      >
+                        <option value="">Select Year Level</option>
+                        {safeLookupData.yearLevels.map((level) => (
+                          <option key={level.year_level_id} value={level.year_level_id}>
+                            {level.year_level}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Semester <span className="required">*</span></label>
+                      <select
+                        value={bulkFormData.semester_id || selectedCurriculum.semester_id}
+                        onChange={(e) => setBulkFormData({ ...bulkFormData, semester_id: e.target.value })}
+                        required
+                      >
+                        <option value="">Select Semester</option>
+                        {safeLookupData.semesters.map((semester) => (
+                          <option key={semester.semester_id} value={semester.semester_id}>
+                            {semester.semester_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Subject <span className="required">*</span></label>
+                      <select
+                        value={subjectRows[0]?.subject_id || selectedCurriculum.subject_id}
+                        onChange={(e) => {
+                          const newRows = [{ ...subjectRows[0], subject_id: e.target.value }];
+                          setSubjectRows(newRows);
+                          if (e.target.value) {
+                            fetchPrerequisitesForSubject(e.target.value);
+                            fetchCorequisitesForSubject(e.target.value);
+                          }
+                        }}
+                        required
+                      >
+                        <option value="">Select Subject</option>
+                        {safeLookupData.subjects.map((subject) => (
+                          <option key={subject.subject_id} value={subject.subject_id}>
+                            {subject.subject_code} - {subject.subject_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Passing Grade</label>
+                      <div className="passing-grade-container">
+                        <select
+                          value={subjectRows[0]?.passing_grade || selectedCurriculum.passing_grade || ''}
+                          onChange={(e) => {
+                            const newRows = [{ ...subjectRows[0], passing_grade: e.target.value }];
+                            setSubjectRows(newRows);
+                          }}
+                        >
+                          <option value="">Select Grade</option>
+                          <option value="50">50</option>
+                          <option value="60">60</option>
+                          <option value="70">70</option>
+                          <option value="pass">Pass</option>
+                          <option value="failed">Failed</option>
+                          <option value="other">Other (specify)</option>
+                        </select>
+                        {(subjectRows[0]?.passing_grade === 'other' || selectedCurriculum?.passing_grade === 'other') && (
+                          <input
+                            type="text"
+                            value={subjectRows[0]?.custom_grade || selectedCurriculum?.custom_grade || ''}
+                            onChange={(e) => {
+                              const newRows = [{ ...subjectRows[0], custom_grade: e.target.value }];
+                              setSubjectRows(newRows);
+                            }}
+                            placeholder="Enter grade"
+                          />
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Type</label>
+                      <select
+                        value={subjectRows[0]?.subject_type || selectedCurriculum.subject_type || ''}
+                        onChange={(e) => {
+                          const newRows = [{ ...subjectRows[0], subject_type: e.target.value }];
+                          setSubjectRows(newRows);
+                        }}
+                      >
+                        <option value="">Select Type</option>
+                        <option value="minor">Minor</option>
+                        <option value="core">Core</option>
+                        <option value="elective subject">Elective Subject</option>
+                      </select>
+                    </div>
+                    
+                    <div className="form-group">
+                      <label>Pre/Co-requisite</label>
+                      <select
+                        value={subjectRows[0]?.requisite_id || selectedCurriculum.requisite_id || ''}
+                        onChange={(e) => {
+                          const newRows = [{ ...subjectRows[0], requisite_id: e.target.value }];
+                          setSubjectRows(newRows);
+                        }}
+                      >
+                        <option value="">None</option>
+                        {(() => {
+                          const combined = (Array.isArray(safeLookupData.requisites) && safeLookupData.requisites.length)
+                            ? safeLookupData.requisites
+                            : [
+                                ...(Array.isArray(safeLookupData.prerequisites) ? safeLookupData.prerequisites : []),
+                                ...(Array.isArray(safeLookupData.corequisites) ? safeLookupData.corequisites : [])
+                              ];
+
+                          // Narrow options to requisites relevant to the selected subject in the edit panel
+                          const subjectIdForEdit = (subjectRows[0] && subjectRows[0].subject_id) ? subjectRows[0].subject_id.toString() : (selectedCurriculum?.subject_id ? selectedCurriculum.subject_id.toString() : null);
+                          const isOwnerMatchEdit = (requisite, subjectId) => {
+                            if (!subjectId) return true;
+                            const ownerCandidates = [requisite.subject_id, requisite.subjectId, requisite.owner_subject_id];
+                            return ownerCandidates.some(c => c !== undefined && c !== null && c.toString() === subjectId);
+                          };
+
+                          const relevantEdit = combined.filter(r => isOwnerMatchEdit(r, subjectIdForEdit));
+                          
+                          // Ensure the currently selected requisite is always included in the options
+                          const currentRequisiteId = subjectRows[0]?.requisite_id || selectedCurriculum.requisite_id;
+                          if (currentRequisiteId) {
+                            const selectedRequisite = combined.find(r => {
+                              const requisiteId = r.requisite_id || r.prerequisite_id || r.corequisite_id || r.prereq_id || r.coreq_id;
+                              return requisiteId && requisiteId.toString() === currentRequisiteId.toString();
+                            });
+                            if (selectedRequisite && !relevantEdit.find(r => {
+                              const requisiteId = r.requisite_id || r.prerequisite_id || r.corequisite_id || r.prereq_id || r.coreq_id;
+                              return requisiteId && requisiteId.toString() === currentRequisiteId.toString();
+                            })) {
+                              relevantEdit.push(selectedRequisite);
+                            }
+                          }
+
+                          return relevantEdit.map((requisite) => {
+                            if (!requisite) return null;
+                            const requisiteId = requisite.requisite_id || requisite.prerequisite_id || requisite.corequisite_id || requisite.prereq_id || requisite.coreq_id;
+                            const resolved = resolveRequisiteLabel(requisite);
+                            return (
+                              <option key={resolved.id || requisiteId} value={requisiteId}>
+                                {resolved.label}
+                              </option>
+                            );
+                          });
+                        })()}
+                      </select>
+                    </div>
+                    
+                    <div className="edit-panel-actions">
+                      <button
+                        type="button"
+                        className="delete-button"
+                        onClick={async () => {
+                          if (window.confirm('Are you sure you want to delete this curriculum entry?')) {
+                            await handleDelete(selectedCurriculum.curriculum_id);
+                            setShowEditPanel(false);
+                            setSelectedCurriculum(null);
+                          }
+                        }}
+                      >
+                        Delete
+                      </button>
+                      <button type="button" onClick={() => {
+                        setShowEditPanel(false);
+                        setSelectedCurriculum(null);
+                        resetBulkForm();
+                      }}>
+                        Cancel
+                      </button>
+                      <button type="submit">Save Changes</button>
+                    </div>
+                  </form>
+                </div>
+              ) : (
+                <div className="edit-panel-empty">
+                  <p>Select a subject from the table to edit it here.</p>
+                  <p className="hint">Click "Select" button on any subject row to edit it.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Co-requisite Modal */}
+      {showCorequisiteModal && (
+        <div className="modal-overlay" onClick={handleCloseCorequisiteModal}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>Add Co-requisite</h3>
+            <form onSubmit={handleCorequisiteSubmit}>
+              <div className="form-group">
+                <label>Subject <span className="required">*</span></label>
+                <select
+                  value={corequisiteForm.subject_id}
+                  onChange={(e) => setCorequisiteForm({ ...corequisiteForm, subject_id: e.target.value })}
+                  required
+                >
+                  <option value="">Select Subject</option>
+                  {safeLookupData.subjects.map((subject) => (
+                    <option key={subject.subject_id} value={subject.subject_id}>
+                      {subject.subject_code} - {subject.subject_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              <div className="form-group">
+                <label>Co-requisite Subject <span className="required">*</span></label>
+                <select
+                  value={corequisiteForm.coreq_subject_id}
+                  onChange={(e) => setCorequisiteForm({ ...corequisiteForm, coreq_subject_id: e.target.value })}
+                  required
+                >
+                  <option value="">Select Co-requisite Subject</option>
+                  {safeLookupData.subjects
+                    .filter(subject => subject.subject_id.toString() !== corequisiteForm.subject_id)
+                    .map((subject) => (
+                    <option key={subject.subject_id} value={subject.subject_id}>
+                      {subject.subject_code} - {subject.subject_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              {error && <div className="error-message">{error}</div>}
+              
+              <div className="modal-actions">
+                <button type="button" onClick={handleCloseCorequisiteModal}>
+                  Cancel
+                </button>
+                <button type="submit">
+                  Add Co-requisite
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default CurriculumManagement;

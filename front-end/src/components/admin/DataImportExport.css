@@ -1,0 +1,120 @@
+.data-import-export {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.data-import-export__header {
+  margin-bottom: 0.85rem;
+}
+
+.data-import-export__header h2 {
+  margin: 0 0 0.35rem;
+  font-size: clamp(1.2rem, 2vw, 1.5rem);
+  font-weight: 750;
+  color: #1b5e20;
+  letter-spacing: -0.02em;
+}
+
+.data-import-export__subtitle {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  max-width: 46rem;
+}
+
+.data-import-export__tabs {
+  display: flex;
+  gap: 0.35rem;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 1.15rem;
+}
+
+.data-import-export__tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: #64748b;
+  font-weight: 650;
+  font-size: 0.92rem;
+  padding: 0.65rem 0.9rem;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+
+.data-import-export__tab:hover {
+  color: #1b5e20;
+}
+
+.data-import-export__tab.active {
+  color: #1b5e20;
+  border-bottom-color: #2e7d32;
+}
+
+.data-import-export__panel {
+  min-width: 0;
+}
+
+.data-import-export__empty {
+  margin: 1rem 0;
+  color: #64748b;
+}
+
+.data-import-export__export-lead {
+  margin: 0 0 1.1rem;
+  color: #475569;
+  font-size: 0.94rem;
+  line-height: 1.45;
+}
+
+.data-import-export__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.data-import-export__card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 1.15rem 1.2rem;
+  box-shadow: 0 4px 16px rgba(27, 94, 32, 0.05);
+}
+
+.data-import-export__card h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1.05rem;
+  color: #0f172a;
+}
+
+.data-import-export__card p {
+  margin: 0 0 1rem;
+  color: #64748b;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.data-import-export__download {
+  appearance: none;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.88rem;
+  padding: 0.55rem 1rem;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(46, 125, 50, 0.22);
+}
+
+.data-import-export__download:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.data-import-export__download:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

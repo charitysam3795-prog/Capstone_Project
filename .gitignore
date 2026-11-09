@@ -1,0 +1,22 @@
+# Not needed for Railway hosting
+db_backups/
+.cache/
+.tools/
+.vscode/
+docs/
+sample-data/
+spamshield-prototype/
+Appendix_O_*.md
+improved_requirements_*.md
+
+# Secrets / deps
+backend-app/.env
+front-end/.env
+front-end/node_modules/
+scripts/node_modules/
+backend-app/vendor/
+front-end/build/
+
+# Combined-host SPA sync output (built on Railway)
+backend-app/public/spa.html
+backend-app/public/static/

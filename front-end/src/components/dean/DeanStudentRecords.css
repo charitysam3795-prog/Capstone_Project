@@ -1,0 +1,213 @@
+.dean-sr {
+  min-height: 100vh;
+  background: #f4f7fb;
+  color: #0f172a;
+  padding: 1.2rem 1.6rem;
+  font-family: inherit;
+}
+
+.dean-sr__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.85rem;
+}
+
+.dean-sr__header h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #1a3d24;
+}
+
+.dean-sr__close {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #1e3a8a;
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dean-sr__close:hover {
+  background: #eff6ff;
+}
+
+.dean-sr__msg {
+  padding: 0.8rem;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 0.88rem;
+}
+
+.dean-sr__msg--error {
+  color: #b91c1c;
+}
+
+/* ---- Student info grid ---- */
+.dean-sr__info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem 1.5rem;
+  background: #fff;
+  border: 1px solid #dbe6f3;
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.65rem;
+  font-size: 0.85rem;
+}
+
+.dean-sr__info-label {
+  font-weight: 700;
+  margin-right: 0.3rem;
+}
+
+.dean-sr__title-cell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.dean-sr__from-tag {
+  display: inline-flex;
+  padding: 0.08rem 0.4rem;
+  border-radius: 6px;
+  border: 1px solid rgba(14, 116, 144, 0.25);
+  background: rgba(236, 254, 255, 0.9);
+  color: #0e7490;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.dean-sr__offsem-tag {
+  display: inline-flex;
+  padding: 0.08rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid #c2410c;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.dean-sr__offsem-tag--semestral {
+  border-color: #1d4f91;
+  background: #eff6ff;
+  color: #1d4f91;
+}
+
+.dean-sr__not-taken-tag {
+  display: inline-flex;
+  padding: 0.08rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid #b91c1c;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.dean-sr__offsem-term {
+  flex-basis: 100%;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+/* ---- Summary strip ---- */
+.dean-sr__summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  padding: 0.6rem 0.85rem;
+  background: #f0f6fb;
+  border-radius: 10px;
+  border: 1px solid #dbe6f3;
+  font-size: 0.84rem;
+  color: #334155;
+  margin-bottom: 0.85rem;
+}
+
+/* ---- Table ---- */
+.dean-sr__table-wrap {
+  background: #fff;
+  border: 1px solid #dbe6f3;
+  border-radius: 10px;
+  overflow-x: auto;
+  margin-bottom: 0.5rem;
+}
+
+.dean-sr__table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 700px;
+}
+
+.dean-sr__table th,
+.dean-sr__table td {
+  border-bottom: 1px solid #e8eef5;
+  text-align: left;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.8rem;
+}
+
+/* Term heading row (dark blue banner) */
+.dean-sr__term-heading-row th {
+  background: linear-gradient(135deg, #1a3d24, #1d4f91);
+  color: #fff;
+  font-size: 0.84rem;
+  font-weight: 700;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 0;
+}
+
+/* Column label row (light header) */
+.dean-sr__col-heading-row th {
+  background: #f0f5fb;
+  color: #475569;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  font-weight: 700;
+  border-bottom: 2px solid #dbe6f3;
+}
+
+.dean-sr__term-sep {
+  margin: 0 0.4rem;
+  opacity: 0.7;
+}
+
+.dean-sr__table tbody tr:hover {
+  background: #f5f9ff;
+}
+
+/* small spacer between term groups */
+.dean-sr__table .dean-sr__term-heading-row:not(:first-child) th {
+  padding-top: 0.85rem;
+  border-top: 3px solid #dbe6f3;
+}
+
+.dean-sr__code {
+  font-weight: 700;
+  color: #1d4f91;
+}
+
+.dean-sr__center {
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .dean-sr__info-grid {
+    grid-template-columns: 1fr;
+  }
+}

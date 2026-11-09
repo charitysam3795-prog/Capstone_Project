@@ -1,0 +1,122 @@
+.session-expiry-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  box-sizing: border-box;
+  animation: session-expiry-fade-in 0.2s ease;
+}
+
+@keyframes session-expiry-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.session-expiry-modal {
+  width: 100%;
+  max-width: 420px;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow:
+    0 25px 50px -12px rgba(0, 0, 0, 0.25),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
+  padding: 1.75rem 1.5rem 1.5rem;
+  text-align: center;
+  font-family:
+    "DM Sans",
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+}
+
+.session-expiry-modal__icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 1rem;
+  border-radius: 50%;
+  border: 2px solid rgba(234, 88, 12, 0.45);
+  background: rgba(255, 247, 237, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.session-expiry-modal__icon-inner {
+  font-size: 2rem;
+  font-weight: 800;
+  color: #ea580c;
+  line-height: 1;
+}
+
+.session-expiry-modal__title {
+  margin: 0 0 0.65rem;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #1e293b;
+  letter-spacing: -0.02em;
+}
+
+.session-expiry-modal__text {
+  margin: 0 0 1.35rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.session-expiry-modal__text strong {
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.session-expiry-modal__actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.session-expiry-modal__btn {
+  min-width: 120px;
+  padding: 0.65rem 1.25rem;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  transition:
+    background 0.15s ease,
+    transform 0.1s ease;
+}
+
+.session-expiry-modal__btn:active {
+  transform: scale(0.98);
+}
+
+.session-expiry-modal__btn--continue {
+  background: #2e7d32;
+  color: #fff;
+}
+
+.session-expiry-modal__btn--continue:hover {
+  background: #1b5e20;
+}
+
+.session-expiry-modal__btn--logout {
+  background: #dc2626;
+  color: #fff;
+}
+
+.session-expiry-modal__btn--logout:hover {
+  background: #b91c1c;
+}

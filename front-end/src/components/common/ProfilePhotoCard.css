@@ -1,0 +1,333 @@
+.profile-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 240px);
+  gap: 1.75rem 2rem;
+  align-items: start;
+}
+
+.profile-layout .profile-form {
+  max-width: none;
+  min-width: 0;
+}
+
+.profile-photo-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 1.1rem 0.85rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+  position: static;
+  align-self: start;
+}
+
+.profile-photo-card__preview {
+  width: 148px;
+  height: 148px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: linear-gradient(145deg, #d1fae5 0%, #a7f3d0 100%);
+  border: 3px solid #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  display: grid;
+  place-items: center;
+}
+
+.profile-photo-card__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
+  display: block;
+}
+
+.profile-photo-card__placeholder {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: #14532d;
+  line-height: 1;
+}
+
+.profile-photo-card__update {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #0f172a;
+  font-size: 0.86rem;
+  font-weight: 650;
+  padding: 0.5rem 0.85rem;
+  border-radius: 999px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.profile-photo-card__update:hover:not(:disabled) {
+  border-color: #2e7d32;
+  color: #14532d;
+}
+
+.profile-photo-card__update:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.profile-photo-card__remove {
+  border: none;
+  background: transparent;
+  color: #b91c1c;
+  font-size: 0.84rem;
+  font-weight: 650;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.profile-photo-card__remove:hover:not(:disabled) {
+  color: #991b1b;
+}
+
+.profile-photo-card__remove:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.profile-photo-card__optional {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.profile-photo-card__hint-text {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-align: center;
+  color: #64748b;
+}
+
+.profile-photo-card__error {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #b91c1c;
+  text-align: center;
+}
+
+.profile-photo-card__file {
+  display: none;
+}
+
+.profile-photo-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.profile-photo-modal {
+  width: min(420px, 100%);
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+  overflow: hidden;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.profile-photo-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.profile-photo-modal__head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.profile-photo-modal__close {
+  width: auto;
+  height: auto;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 1.85rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #64748b;
+  box-shadow: none;
+}
+
+.profile-photo-modal__close:hover {
+  background: transparent;
+  color: #0f172a;
+}
+
+.profile-photo-modal__stage {
+  padding: 1.25rem 1rem 0.5rem;
+  display: flex;
+  justify-content: center;
+  background: #f3f4f6;
+}
+
+.profile-photo-modal__viewport {
+  position: relative;
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #111827;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.profile-photo-modal__viewport.is-dragging {
+  cursor: grabbing;
+}
+
+.profile-photo-modal__source {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: auto;
+  height: auto;
+  min-width: 100%;
+  min-height: 100%;
+  max-width: none;
+  transform-origin: center center;
+  pointer-events: none;
+}
+
+.profile-photo-modal__mask {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+}
+
+.profile-photo-modal__zoom {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.85rem 1.25rem 0.35rem;
+  color: #6b7280;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.profile-photo-modal__zoom input[type='range'] {
+  flex: 1;
+  accent-color: #2e7d32;
+}
+
+.profile-photo-modal__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem 1.25rem;
+}
+
+.profile-photo-modal__tool {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 8px;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: #374151;
+}
+
+.profile-photo-modal__tool:hover:not(:disabled) {
+  background: #f9fafb;
+}
+
+.profile-photo-modal__tool--danger {
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.profile-photo-modal__hint {
+  margin: 0.15rem 1.25rem 0;
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+.profile-photo-modal__error {
+  margin: 0.5rem 1.25rem 0;
+  font-size: 0.85rem;
+  color: #b91c1c;
+}
+
+.profile-photo-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 1rem 1.25rem 1.15rem;
+  border-top: 1px solid #e5e7eb;
+  margin-top: 0.85rem;
+}
+
+.profile-photo-modal__cancel {
+  border: none;
+  background: transparent;
+  color: #374151;
+  font-weight: 650;
+  padding: 0.55rem 0.9rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.profile-photo-modal__cancel:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.profile-photo-modal__save {
+  border: none;
+  background: #2e7d32;
+  color: #fff;
+  font-weight: 700;
+  padding: 0.55rem 1.15rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.profile-photo-modal__save:hover:not(:disabled) {
+  background: #1b5e20;
+}
+
+.profile-photo-modal__save:disabled,
+.profile-photo-modal__cancel:disabled,
+.profile-photo-modal__tool:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .profile-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-photo-card {
+    position: static;
+    max-width: 280px;
+    margin: 0 auto;
+    order: -1;
+  }
+}

@@ -1,0 +1,435 @@
+.curriculum-evaluation {
+    padding: 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+    background: #f5f5f5;
+}
+
+.evaluation-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #e9ecef;
+}
+
+.evaluation-header h2 {
+    color: #2c3e50;
+    margin: 0;
+    font-size: 28px;
+    font-weight: 600;
+}
+
+.header-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.alert {
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    font-weight: 500;
+}
+
+.alert-error {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.alert-success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.btn-primary {
+    background-color: #2e7d32;
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #1b5e20;
+}
+
+.btn-success {
+    background-color: #28a745;
+    color: white;
+}
+
+.btn-success:hover {
+    background-color: #218838;
+}
+
+.btn-secondary {
+    background-color: #6c757d;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background-color: #545b62;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Student Selection */
+.student-selection {
+    background: white;
+    padding: 25px;
+    border-radius: 8px;
+    margin-bottom: 25px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.student-selection h3 {
+    margin: 0 0 20px 0;
+    color: #495057;
+    font-size: 20px;
+}
+
+.filters-row {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.search-input {
+    flex: 1;
+    max-width: 300px;
+}
+
+.form-control {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 14px;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.form-control:focus {
+    border-color: #80bdff;
+    outline: 0;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+.students-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 15px;
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 10px;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+}
+
+.student-card {
+    border: 2px solid #e9ecef;
+    border-radius: 8px;
+    padding: 15px;
+    background: white;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.student-card:hover {
+    border-color: #2e7d32;
+    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.15);
+}
+
+.student-card.selected {
+    border-color: #2e7d32;
+    background-color: #f8f9ff;
+    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.25);
+}
+
+.student-info h4 {
+    margin: 0 0 8px 0;
+    color: #2c3e50;
+    font-size: 16px;
+}
+
+.student-info p {
+    margin: 4px 0;
+    color: #6c757d;
+    font-size: 14px;
+}
+
+/* Curriculum Sheet */
+.curriculum-sheet {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    overflow: hidden;
+}
+
+.sheet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 25px;
+    background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%);
+    color: white;
+}
+
+.student-info-header h3 {
+    margin: 0 0 5px 0;
+    font-size: 24px;
+    font-weight: 600;
+}
+
+.student-info-header p {
+    margin: 0;
+    opacity: 0.9;
+    font-size: 16px;
+}
+
+.units-summary {
+    display: flex;
+    gap: 20px;
+}
+
+.units-box {
+    text-align: center;
+    background: rgba(255, 255, 255, 0.2);
+    padding: 10px 15px;
+    border-radius: 6px;
+}
+
+.units-box label {
+    display: block;
+    font-size: 12px;
+    opacity: 0.9;
+    margin-bottom: 5px;
+}
+
+.units-value {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.units-value.lacking {
+    color: #ffc107;
+}
+
+.curriculum-table {
+    padding: 25px;
+}
+
+.year-section {
+    margin-bottom: 30px;
+}
+
+.year-section h4 {
+    color: #495057;
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 15px 0;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #e9ecef;
+}
+
+.semester-section {
+    margin-bottom: 25px;
+}
+
+.semester-section h5 {
+    color: #6c757d;
+    font-size: 16px;
+    font-weight: 500;
+    margin: 0 0 15px 0;
+    padding-left: 15px;
+    border-left: 3px solid #2e7d32;
+}
+
+/* Div-based curriculum grid (shared .curriculum-data-grid from CurriculumManagement.css) */
+.semester-section .eval-curriculum-grid {
+    width: 100%;
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.eval-curriculum-grid .status-select,
+.eval-curriculum-grid .grade-input {
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+@media (min-width: 768px) {
+    .semester-section .eval-curriculum-grid .curriculum-data-grid__row:last-child {
+        border-bottom: none;
+    }
+}
+
+/* Status Badge */
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: inline-block;
+}
+
+.status-passed {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.status-failed {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.status-incomplete {
+    background-color: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeaa7;
+}
+
+.status-ongoing {
+    background-color: #cce5ff;
+    color: #004085;
+    border: 1px solid #b3d7ff;
+}
+
+/* Form Controls */
+.status-select,
+.grade-input {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.status-select:focus,
+.grade-input:focus {
+    border-color: #80bdff;
+    outline: 0;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+.save-section {
+    padding: 20px 25px;
+    background: #f8f9fa;
+    border-top: 1px solid #dee2e6;
+    text-align: center;
+}
+
+/* Loading */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.loading-spinner {
+    background: white;
+    padding: 20px 30px;
+    border-radius: 8px;
+    font-size: 16px;
+    color: #495057;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .curriculum-evaluation {
+        padding: 15px;
+    }
+    
+    .evaluation-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 15px;
+    }
+    
+    .filters-row {
+        flex-direction: column;
+    }
+    
+    .search-input {
+        max-width: none;
+    }
+    
+    .students-grid {
+        grid-template-columns: 1fr;
+        max-height: 300px;
+    }
+    
+    .sheet-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 15px;
+    }
+    
+    .units-summary {
+        width: 100%;
+        justify-content: space-between;
+    }
+    
+    .curriculum-table {
+        padding: 15px;
+    }
+    
+}
+
+@media (max-width: 480px) {
+    .sheet-header {
+        padding: 15px;
+    }
+    
+    .student-info-header h3 {
+        font-size: 20px;
+    }
+    
+    .units-box {
+        padding: 8px 12px;
+    }
+    
+    .units-value {
+        font-size: 18px;
+    }
+    
+    .curriculum-table {
+        padding: 10px;
+    }
+    
+    .status-badge {
+        font-size: 10px;
+        padding: 3px 6px;
+    }
+}

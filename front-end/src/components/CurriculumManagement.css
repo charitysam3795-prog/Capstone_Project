@@ -1,0 +1,414 @@
+/* Lightweight modern design for CurriculumManagement component */
+
+:root{
+  --bg: #f6f8fa;
+  --card: #ffffff;
+  --muted: #6b7280;
+  --accent: #2e7d32;
+  --danger: #ef4444;
+  --success: #16a34a;
+  --surface-shadow: 0 6px 20px rgba(17,24,39,0.06);
+  --glass: rgba(255,255,255,0.7);
+  --radius: 10px;
+  --pad: 14px;
+  --table-border: #e6e9ef;
+}
+
+/* Page wrapper */
+.curriculum-management{
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  background: linear-gradient(180deg, var(--bg) 0%, #ffffff 100%);
+  color: #0f172a;
+  padding: 20px;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+/* Header */
+.management-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:18px;
+}
+.management-header h2{
+  margin:0;
+  font-size:18px;
+  letter-spacing:0.2px;
+  color:#0b1220;
+}
+.add-button{
+  background:var(--accent);
+  color:#fff;
+  border:0;
+  padding:10px 14px;
+  border-radius:8px;
+  font-weight:600;
+  cursor:pointer;
+  box-shadow: 0 6px 18px rgba(37,99,235,0.18);
+}
+.add-button:hover{ transform: translateY(-1px); }
+
+/* Error / Loading / No-data */
+.error-message{
+  background: #fff5f5;
+  color: var(--danger);
+  border: 1px solid rgba(239,68,68,0.06);
+  padding:10px 12px;
+  border-radius:8px;
+  margin-bottom:12px;
+  font-size:14px;
+}
+.loading, .no-data{
+  text-align:center;
+  color:var(--muted);
+  padding:30px 12px;
+  background: var(--card);
+  border-radius:8px;
+  box-shadow: var(--surface-shadow);
+}
+
+/* Filter */
+.filter-section{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-bottom:18px;
+}
+.filter-select{
+  padding:8px 10px;
+  border-radius:8px;
+  border:1px solid var(--table-border);
+  background:#fff;
+}
+
+/* Year group section */
+.year-group{
+  background:var(--card);
+  border-radius:var(--radius);
+  padding:14px;
+  margin-bottom:16px;
+  box-shadow:var(--surface-shadow);
+}
+.year-group-header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:10px;
+}
+.year-group-header h2{
+  font-size:13px;
+  margin:0;
+  color:#0f172a;
+}
+.year-group-actions button{
+  background:transparent;
+  border:1px solid var(--table-border);
+  padding:6px 10px;
+  border-radius:8px;
+  cursor:pointer;
+}
+.edit-group-button{ color:var(--accent); border-color: rgba(37,99,235,0.15); }
+.edit-group-button:hover { background: rgba(37,99,235,0.06); }
+
+/* Semesters stacked layout */
+.semesters-stacked-container{
+  display:flex;
+  flex-direction:column;
+  gap:16px;
+}
+.semester-section{
+  background:linear-gradient(180deg, rgba(37,99,235,0.02), transparent);
+  border-radius:8px;
+  padding:10px;
+}
+.semester-section-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  margin-bottom:8px;
+}
+.semester-section-header h3{
+  margin:0;
+  font-size:13px;
+  color:#0b1220;
+}
+.delete-semester-button{
+  background: transparent;
+  border:1px solid rgba(239,68,68,0.12);
+  color:var(--danger);
+  padding:6px 8px;
+  border-radius:8px;
+  cursor:pointer;
+}
+.delete-semester-button:hover{ background: rgba(239,68,68,0.06); }
+
+/* Table */
+.table-container{
+  overflow:auto;
+}
+.data-table{
+  width:100%;
+  border-collapse:collapse;
+  background:transparent;
+  min-width:760px;
+}
+.data-table th, .data-table td{
+  text-align:left;
+  padding:10px 12px;
+  border-bottom:1px solid var(--table-border);
+  font-size:13px;
+  vertical-align:middle;
+}
+.data-table thead th{
+  background:transparent;
+  color:var(--muted);
+  font-weight:600;
+  font-size:12px;
+  letter-spacing:0.4px;
+}
+.data-table tbody tr:hover{
+  background: rgba(9,30,66,0.02);
+}
+.no-subjects{
+  text-align:center;
+  color:var(--muted);
+  padding:18px;
+}
+
+/* Action buttons inside table */
+.action-buttons{
+  display:flex;
+  gap:6px;
+}
+.edit-button, .delete-button{
+  padding:6px 8px;
+  border-radius:8px;
+  border:0;
+  cursor:pointer;
+  font-size:13px;
+}
+.edit-button{
+  background: #e7f0ff;
+  color: var(--accent);
+}
+.delete-button{
+  background: #fff0f0;
+  color: var(--danger);
+}
+
+/* Modal */
+.modal-overlay{
+  position:fixed;
+  inset:0;
+  background: rgba(2,6,23,0.45);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:1400;
+  padding:20px;
+}
+.modal-content.bulk-modal{
+  width:100%;
+  max-width:1060px;
+  background: var(--card);
+  border-radius:12px;
+  box-shadow: 0 20px 50px rgba(2,6,23,0.35);
+  overflow:auto;
+  max-height:92vh;
+  padding:18px;
+}
+.modal-content h3{ margin-top:0; }
+.modal-form-container{ margin-top:8px; }
+.bulk-form-header{
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+  margin-bottom:12px;
+}
+.form-group{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  min-width:190px;
+}
+.form-group label{ font-size:13px; color:#111827; }
+.form-group select, .form-group input{
+  padding:8px 10px;
+  border-radius:8px;
+  border:1px solid var(--table-border);
+  background:#fff;
+  font-size:14px;
+}
+
+/* Subjects table inside modal */
+.subjects-table-container{ margin-top:12px; }
+.subjects-table{
+  width:100%;
+  border-collapse:collapse;
+  margin-bottom:10px;
+}
+.subjects-table th, .subjects-table td{
+  padding:8px;
+  border-bottom:1px solid var(--table-border);
+  font-size:13px;
+}
+.subject-select{ padding:6px; border-radius:6px; border:1px solid var(--table-border); }
+.subject-name-readonly, .units-readonly, .hours-readonly{
+  background: var(--glass);
+  border-radius:6px;
+  padding:6px 8px;
+  border:1px solid rgba(0,0,0,0.02);
+  width:100%;
+}
+.passing-grade-container{ display:flex; gap:8px; align-items:center; }
+.add-row-button{
+  background:transparent;
+  border:1px dashed rgba(37,99,235,0.22);
+  color:var(--accent);
+  padding:8px 12px;
+  border-radius:8px;
+  cursor:pointer;
+}
+.remove-row-button{
+  background:transparent;
+  color:var(--danger);
+  border:1px solid rgba(239,68,68,0.08);
+  padding:6px 8px;
+  border-radius:6px;
+  cursor:pointer;
+}
+
+/* Modal actions */
+.modal-actions{
+  display:flex;
+  justify-content:flex-end;
+  gap:8px;
+  margin-top:10px;
+}
+.modal-actions button{
+  padding:8px 12px;
+  border-radius:8px;
+  cursor:pointer;
+  border:0;
+}
+.modal-actions button[type="submit"], .modal-actions button[onclick]{
+  background:var(--accent);
+  color:#fff;
+}
+
+/* Edit panel (right side) */
+.edit-panel-overlay{
+  position:fixed;
+  inset:0;
+  z-index:1200;
+  background: rgba(2,6,23,0.18);
+  display:flex;
+  justify-content:flex-end;
+  align-items:stretch;
+  padding:18px;
+}
+.edit-panel{
+  width:420px;
+  max-width:92%;
+  background:var(--card);
+  border-radius:12px;
+  box-shadow: 0 20px 60px rgba(2,6,23,0.3);
+  padding:14px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  transform: translateX(0);
+}
+.edit-panel-header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+.close-panel-button{
+  background:transparent;
+  border:0;
+  font-size:20px;
+  cursor:pointer;
+}
+.edit-panel-content{ overflow:auto; padding-right:6px; }
+
+/* Edit panel actions */
+.edit-panel-actions{
+  display:flex;
+  gap:8px;
+  justify-content:flex-end;
+  margin-top:8px;
+}
+
+/* compact single-digit fields for units/hours (stacked vertically, not side-by-side) */
+.subject-name-readonly{
+  background: var(--glass);
+  border-radius:6px;
+  padding:6px 8px;
+  border:1px solid rgba(0,0,0,0.02);
+  width:100%;
+}
+
+/* Readonly and editable small numeric fields sized for 1 digit, stacked one per line */
+.units-readonly,
+.hours-readonly,
+.units-input,
+.hours-input {
+  display: inline-block;            /* side-by-side in a row */
+  width: 4ch;                       /* larger — fits 1-2 digits comfortably */
+  min-width: 4ch;
+  max-width: 6ch;
+  padding: 6px 8px;
+  font-size: 14px;
+  line-height: 1.2;
+  text-align: center;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.06);
+  background: var(--glass);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace;
+  box-sizing: border-box;
+  margin: 0;
+}
+
+/* wrapper to keep units + hours together in landscape */
+.units-hours-group {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+}
+
+/* center the group inside table cells */
+.subjects-table td .units-hours-group {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* remove native number input spinners for compact look */
+.subjects-table td input[type="number"]::-webkit-outer-spin-button,
+.subjects-table td input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* fallback / responsive: stack vertically on very small screens */
+@media (max-width:480px){
+  .units-hours-group { flex-direction: column; gap:4px; }
+  .units-readonly,
+  .hours-readonly,
+  .units-input,
+  .hours-input {
+    width: 5ch;
+    min-width: 5ch;
+  }
+}
+
+@media (max-width:900px){
+  .semesters-stacked-container{ flex-direction:column; }
+  .modal-content.bulk-modal{ padding:12px; max-width:calc(100% - 32px); }
+  .bulk-form-header{ flex-direction:column; }
+  .year-group{ padding:12px; }
+}

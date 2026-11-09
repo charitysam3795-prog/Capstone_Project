@@ -1,0 +1,68 @@
+.net-recover-banner {
+  position: sticky;
+  top: 0;
+  z-index: 12000;
+  width: 100%;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12);
+}
+
+.net-recover-banner--offline {
+  background: #7f1d1d;
+  color: #fff;
+}
+
+.net-recover-banner--warn {
+  background: #92400e;
+  color: #fff7ed;
+}
+
+.net-recover-banner__inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0.65rem 1rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.net-recover-banner__inner > i {
+  margin-top: 0.15rem;
+  font-size: 1.05rem;
+  opacity: 0.95;
+}
+
+.net-recover-banner__text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.net-recover-banner__text strong {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.net-recover-banner__dismiss {
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.net-recover-banner__dismiss:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+@media (max-width: 640px) {
+  .net-recover-banner__inner {
+    flex-wrap: wrap;
+  }
+}

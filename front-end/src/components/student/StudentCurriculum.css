@@ -1,0 +1,340 @@
+/* Student curriculum: reuses CurriculumManagement.css; these are small overrides */
+
+.student-curriculum-management-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.student-curriculum-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.student-curriculum-pct-toggle,
+.student-curriculum-conv-tables {
+  padding: 0.5rem 0.85rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border: 1px solid #c7d2e0;
+  background: #fff;
+  color: #334155;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.student-curriculum-pct-toggle:hover,
+.student-curriculum-conv-tables:hover {
+  border-color: #2e7d32;
+  color: #1b5e20;
+}
+
+.student-curriculum-pct-toggle.active {
+  background: #e8f0f8;
+  border-color: #2e7d32;
+  color: #1a3d24;
+}
+
+.student-curriculum-conv-tables {
+  background: #f8fafc;
+}
+
+.student-curriculum-download-eval {
+  padding: 0.5rem 1rem;
+  background: #2e7d32;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.student-curriculum-download-eval:hover:not(:disabled) {
+  background: #1b5e20;
+}
+
+.student-curriculum-download-eval:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.student-curriculum-page {
+  min-height: auto;
+  padding: 0;
+  background: transparent;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/* Year tabs use admin-aligned pills from CurriculumManagement.css (.curriculum-year-pagination__pill) */
+.student-curriculum-year-nav {
+  margin-bottom: 4px;
+}
+
+/* 8 columns + status content — a bit wider than admin 7-col table */
+.curriculum-data-grid.curriculum-data-grid--scroll-table.student-curriculum-grid {
+  min-width: 920px;
+}
+
+.student-curriculum-grid .prereq-cell .curriculum-data-grid__cell-value {
+  font-style: italic;
+  color: #6b7280;
+  max-width: none;
+}
+
+@media (min-width: 768px) {
+  .student-curriculum-grid .prereq-cell .curriculum-data-grid__cell-value {
+    max-width: 140px;
+  }
+}
+
+/* Status column: badge + label stack */
+.student-curriculum-grid .student-curriculum-status-td .curriculum-data-grid__cell-value {
+  vertical-align: middle;
+  min-width: 0;
+}
+
+/*
+ * Scroll-table cells use min-width: 0 so columns can shrink; without a floor, the Status
+ * column can become narrower than badges (“Not Eligible”) and they paint over the Type column.
+ */
+.student-curriculum-grid.curriculum-data-grid--scroll-table .curriculum-data-grid__th:nth-child(8),
+.student-curriculum-grid.curriculum-data-grid--scroll-table .student-curriculum-status-td {
+  min-width: 7.75rem;
+}
+
+@media (min-width: 768px) {
+  .student-curriculum-grid.curriculum-data-grid--scroll-table .curriculum-data-grid__th:nth-child(8),
+  .student-curriculum-grid.curriculum-data-grid--scroll-table .student-curriculum-status-td {
+    min-width: 11rem;
+  }
+}
+
+.student-curriculum-status-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  line-height: 1.25;
+}
+
+.student-curriculum-status-inline .status-badge {
+  flex-shrink: 0;
+}
+
+.student-curriculum-grade-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+}
+
+.student-curriculum-grade {
+  color: #15803d;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.student-curriculum-grade-pct {
+  color: #1d4ed8;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.muted-status {
+  color: #9ca3af;
+}
+
+.status-not-eligible {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: 100%;
+  white-space: nowrap;
+  background: #dc2626;
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.student-curriculum-grid .status-failed {
+  display: inline-block;
+  background: #f8d7da;
+  color: #721c24;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.student-curriculum-grid .status-incomplete {
+  display: inline-block;
+  background: #fff3cd;
+  color: #856404;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.student-curriculum-grid .status-complete {
+  display: inline-block;
+  background: #dbeafe;
+  color: #1e40af;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.student-curriculum-coreq-hint {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  max-width: 14rem;
+  line-height: 1.35;
+}
+
+.status-credited {
+  background: #0f766e;
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.student-curriculum-credit-note {
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Curriculum card: contains horizontal scroll table, no page-level overflow */
+.student-curriculum-panel {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.student-curriculum-page .student-curriculum-panel__inner.year-group {
+  margin-top: 0;
+  margin-bottom: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #d8e0ea;
+  box-shadow: 0 4px 22px rgba(17, 24, 39, 0.08);
+}
+
+.student-curriculum-panel__header.year-group-header {
+  margin-bottom: 0;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid #e8edf3;
+  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 60%);
+}
+
+.student-curriculum-panel__header .curriculum-header-block {
+  padding: 0 4px;
+}
+
+.student-curriculum-panel__header .curriculum-header-school {
+  font-size: 12px;
+}
+
+.student-curriculum-panel__header .curriculum-header-program {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.35;
+  margin-top: 4px;
+}
+
+@media (min-width: 480px) {
+  .student-curriculum-panel__header .curriculum-header-school {
+    font-size: 13px;
+  }
+
+  .student-curriculum-panel__header .curriculum-header-program {
+    font-size: 12px;
+  }
+}
+
+.student-curriculum-panel__body.semesters-stacked-container {
+  padding: 12px 12px 14px;
+  gap: 14px;
+  background: #f4f7fb;
+}
+
+.student-curriculum-panel__body .semester-section {
+  padding: 0;
+  background: transparent;
+  min-width: 0;
+}
+
+.student-curriculum-panel__body .semester-section-header {
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.student-curriculum-panel__body .semester-section-header h3 {
+  font-size: 12px;
+  line-height: 1.35;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.student-curriculum-page .student-curriculum-panel__body .table-container {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  max-width: 100%;
+  border: none;
+  background: transparent;
+}
+
+.student-curriculum-inc-hint {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #b45309;
+  line-height: 1.35;
+  max-width: 220px;
+}
+
+.student-curriculum-empty {
+  max-width: 36rem;
+  margin: 1.5rem auto;
+  padding: 1.25rem 1.5rem;
+  border-radius: 12px;
+  border: 1px solid rgba(46, 125, 50, 0.2);
+  background: #f8fafc;
+  text-align: left;
+}
+
+.student-curriculum-empty-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #1b5e20;
+}
+
+.student-curriculum-empty-body {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: #4b5563;
+}
+

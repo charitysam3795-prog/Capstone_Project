@@ -1,0 +1,545 @@
+/**
+ * Shared Admin / Lookup / Curriculum CRUD chrome.
+ * Import once per module CSS file so modals, forms, and action buttons stay consistent.
+ */
+:root {
+  --admin-accent: #2e7d32;
+  --admin-accent-dark: #1b5e20;
+  --admin-accent-soft: rgba(46, 125, 50, 0.12);
+  --admin-surface: #ffffff;
+  --admin-page: var(--portal-surface, #f3f4f6);
+  --admin-border: var(--portal-border, #e5e7eb);
+  --admin-border-soft: #eef0f2;
+  --admin-text: var(--portal-text, #1f2937);
+  --admin-muted: var(--portal-muted, #6b7280);
+  --admin-danger: #c62828;
+  --admin-danger-soft: #fef2f2;
+  --admin-warn: #b45309;
+  --admin-warn-soft: #fff8e7;
+  --admin-ok: #15803d;
+  --admin-ok-soft: #ecfdf5;
+  --admin-radius: 14px;
+  --admin-radius-sm: 10px;
+  --admin-shadow: 0 12px 36px rgba(27, 94, 32, 0.1);
+  --admin-shadow-soft: 0 4px 16px rgba(27, 94, 32, 0.06);
+  --admin-font: var(--portal-font, "DM Sans", system-ui, sans-serif);
+}
+
+/* —— Page shells —— */
+.lookup-data-management,
+.curriculum-management,
+.academic-management,
+.elective-slot-management,
+.user-management,
+.credit-evaluation-management,
+.role-settings,
+.student-management,
+.security-settings {
+  font-family: var(--admin-font);
+  color: var(--admin-text);
+}
+
+.lookup-data-management .management-header,
+.curriculum-management .management-header,
+.academic-management .management-header,
+.elective-slot-management .management-header,
+.user-management .management-header,
+.credit-evaluation-management .management-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.85rem 1rem;
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--admin-border-soft);
+}
+
+.lookup-data-management .management-header h2,
+.curriculum-management .management-header h2,
+.academic-management .management-header h2,
+.elective-slot-management .management-header h2,
+.user-management .management-header h2,
+.credit-evaluation-management .management-header h2 {
+  margin: 0;
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: #1b5e20;
+}
+
+/* —— Primary / secondary actions —— */
+.lookup-data-management .add-button,
+.curriculum-management .add-button,
+.academic-management .add-button,
+.elective-slot-management .add-button,
+.user-management .add-button,
+.credit-evaluation-management .add-button,
+.lookup-data-management .refresh-button,
+.lookup-data-management .submit-button,
+.curriculum-management .submit-button,
+.academic-management .submit-button,
+.elective-slot-management .submit-button,
+.user-management .submit-button,
+.credit-evaluation-management .submit-button,
+.curriculum-management .btn-primary,
+.lookup-data-management .btn-primary {
+  background: var(--admin-accent, #2e7d32);
+  color: #fff;
+  border: 1px solid var(--admin-accent-dark, #1b5e20);
+  border-radius: 999px;
+  padding: 0.5rem 1.1rem;
+  font-size: 0.86rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(46, 125, 50, 0.18);
+  transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+}
+
+.lookup-data-management .add-button:hover,
+.curriculum-management .add-button:hover,
+.academic-management .add-button:hover,
+.elective-slot-management .add-button:hover,
+.user-management .add-button:hover,
+.credit-evaluation-management .add-button:hover,
+.lookup-data-management .refresh-button:hover,
+.lookup-data-management .submit-button:hover,
+.curriculum-management .submit-button:hover,
+.academic-management .submit-button:hover,
+.elective-slot-management .submit-button:hover,
+.user-management .submit-button:hover,
+.credit-evaluation-management .submit-button:hover,
+.curriculum-management .btn-primary:hover,
+.lookup-data-management .btn-primary:hover {
+  background: var(--admin-accent-dark, #1b5e20);
+  filter: none;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(27, 94, 32, 0.22);
+}
+
+.lookup-data-management .cancel-button,
+.curriculum-management .cancel-button,
+.academic-management .cancel-button,
+.elective-slot-management .cancel-button,
+.user-management .cancel-button,
+.credit-evaluation-management .cancel-button,
+.curriculum-management .btn-secondary {
+  background: #fff;
+  color: #334155;
+  border: 1px solid var(--admin-border);
+  border-radius: 999px;
+  padding: 0.5rem 1.1rem;
+  font-size: 0.86rem;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.lookup-data-management .cancel-button:hover,
+.curriculum-management .cancel-button:hover,
+.academic-management .cancel-button:hover,
+.elective-slot-management .cancel-button:hover,
+.user-management .cancel-button:hover,
+.credit-evaluation-management .cancel-button:hover,
+.curriculum-management .btn-secondary:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+/* —— Modals (Lookup uses .app-dialog; Curriculum uses .modal-content) —— */
+.lookup-data-management .modal-overlay,
+.curriculum-management .modal-overlay,
+.academic-management .modal-overlay,
+.elective-slot-management .modal-overlay,
+.user-management .modal-overlay,
+.credit-evaluation-management .modal-overlay,
+.role-settings .modal-overlay,
+.student-management .modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.lookup-data-management .app-dialog,
+.curriculum-management .modal-content,
+.academic-management .modal-content,
+.academic-management .app-dialog,
+.elective-slot-management .modal-content,
+.elective-slot-management .app-dialog,
+.user-management .modal-content,
+.user-management .app-dialog,
+.credit-evaluation-management .modal-content,
+.credit-evaluation-management .app-dialog,
+.role-settings .app-dialog,
+.student-management .app-dialog {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  top: auto;
+  left: auto;
+  height: auto;
+  z-index: auto;
+  outline: none;
+  background: var(--admin-surface);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 18px;
+  box-shadow: var(--admin-shadow);
+  width: min(640px, 100%);
+  max-height: min(88vh, 920px);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.curriculum-management .modal-content.bulk-modal,
+.curriculum-management .modal-content.large-modal,
+.lookup-data-management .app-dialog.large-modal {
+  width: min(1100px, 100%);
+}
+
+.lookup-data-management .modal-header,
+.curriculum-management .modal-header,
+.academic-management .modal-header,
+.elective-slot-management .modal-header,
+.user-management .modal-header,
+.credit-evaluation-management .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1.05rem 1.25rem;
+  border-bottom: 1px solid var(--admin-border-soft);
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.lookup-data-management .modal-header h3,
+.curriculum-management .modal-header h3,
+.academic-management .modal-header h3,
+.elective-slot-management .modal-header h3,
+.user-management .modal-header h3,
+.credit-evaluation-management .modal-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 750;
+  color: #1b5e20;
+}
+
+.lookup-data-management .close-button,
+.curriculum-management .close-button,
+.academic-management .close-button,
+.elective-slot-management .close-button,
+.user-management .close-button,
+.credit-evaluation-management .close-button {
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 1.85rem;
+  font-weight: 400;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+  transition: color 0.15s ease;
+}
+
+.lookup-data-management .close-button:hover,
+.curriculum-management .close-button:hover,
+.academic-management .close-button:hover,
+.elective-slot-management .close-button:hover,
+.user-management .close-button:hover,
+.credit-evaluation-management .close-button:hover {
+  background: transparent;
+  color: #0f172a;
+}
+
+.lookup-data-management .modal-form,
+.curriculum-management .modal-form,
+.curriculum-management .modal-form-container,
+.academic-management .modal-form,
+.elective-slot-management .modal-form,
+.user-management .modal-form,
+.credit-evaluation-management .modal-form {
+  padding: 1.15rem 1.25rem 1.25rem;
+}
+
+.lookup-data-management .form-group,
+.curriculum-management .form-group,
+.academic-management .form-group,
+.elective-slot-management .form-group,
+.user-management .form-group,
+.credit-evaluation-management .form-group {
+  margin-bottom: 1rem;
+}
+
+.lookup-data-management .form-group label,
+.curriculum-management .form-group label,
+.academic-management .form-group label,
+.elective-slot-management .form-group label,
+.user-management .form-group label,
+.credit-evaluation-management .form-group label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #334155;
+}
+
+.lookup-data-management .form-group input,
+.lookup-data-management .form-group textarea,
+.lookup-data-management .form-group select,
+.curriculum-management .form-group input,
+.curriculum-management .form-group textarea,
+.curriculum-management .form-group select,
+.academic-management .form-group input,
+.academic-management .form-group textarea,
+.academic-management .form-group select,
+.elective-slot-management .form-group input,
+.elective-slot-management .form-group textarea,
+.elective-slot-management .form-group select,
+.user-management .form-group input,
+.user-management .form-group textarea,
+.user-management .form-group select,
+.credit-evaluation-management .form-group input,
+.credit-evaluation-management .form-group textarea,
+.credit-evaluation-management .form-group select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--admin-border);
+  border-radius: 10px;
+  font-size: 0.92rem;
+  color: var(--admin-text);
+  background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.lookup-data-management .form-group input:focus,
+.lookup-data-management .form-group textarea:focus,
+.lookup-data-management .form-group select:focus,
+.curriculum-management .form-group input:focus,
+.curriculum-management .form-group textarea:focus,
+.curriculum-management .form-group select:focus,
+.academic-management .form-group input:focus,
+.academic-management .form-group textarea:focus,
+.academic-management .form-group select:focus,
+.elective-slot-management .form-group input:focus,
+.elective-slot-management .form-group textarea:focus,
+.elective-slot-management .form-group select:focus,
+.user-management .form-group input:focus,
+.user-management .form-group textarea:focus,
+.user-management .form-group select:focus,
+.credit-evaluation-management .form-group input:focus,
+.credit-evaluation-management .form-group textarea:focus,
+.credit-evaluation-management .form-group select:focus {
+  outline: none;
+  border-color: var(--admin-accent);
+  box-shadow: 0 0 0 3px var(--admin-accent-soft);
+}
+
+.lookup-data-management .form-actions,
+.curriculum-management .form-actions,
+.curriculum-management .modal-actions,
+.academic-management .form-actions,
+.academic-management .modal-actions,
+.elective-slot-management .form-actions,
+.elective-slot-management .modal-actions,
+.user-management .form-actions,
+.user-management .modal-actions,
+.credit-evaluation-management .form-actions,
+.credit-evaluation-management .modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 1.15rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--admin-border-soft);
+}
+
+/* —— Row actions: shared outline family (not candy pastels) —— */
+.lookup-data-management .edit-button,
+.curriculum-management .edit-button,
+.academic-management .edit-button,
+.elective-slot-management .edit-button,
+.user-management .edit-button,
+.credit-evaluation-management .edit-button,
+.lookup-data-management .delete-button,
+.lookup-data-management .deactivate-button,
+.lookup-data-management .activate-button,
+.curriculum-management .delete-button,
+.academic-management .delete-button,
+.elective-slot-management .delete-button,
+.user-management .delete-button,
+.credit-evaluation-management .delete-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: 1.85rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+  cursor: pointer;
+  box-shadow: none;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.12s ease;
+}
+
+.lookup-data-management .edit-button,
+.curriculum-management .edit-button,
+.academic-management .edit-button,
+.elective-slot-management .edit-button,
+.user-management .edit-button,
+.credit-evaluation-management .edit-button {
+  color: var(--admin-accent-dark, #1b5e20);
+  border-color: rgba(46, 125, 50, 0.35);
+  background: #fff;
+}
+
+.lookup-data-management .edit-button:hover,
+.curriculum-management .edit-button:hover,
+.academic-management .edit-button:hover,
+.elective-slot-management .edit-button:hover,
+.user-management .edit-button:hover,
+.credit-evaluation-management .edit-button:hover {
+  background: rgba(46, 125, 50, 0.08);
+  border-color: var(--admin-accent, #2e7d32);
+}
+
+.lookup-data-management .activate-button {
+  color: #fff;
+  border-color: var(--admin-accent, #2e7d32);
+  background: var(--admin-accent, #2e7d32);
+}
+
+.lookup-data-management .activate-button:hover {
+  background: var(--admin-accent-dark, #1b5e20);
+  border-color: var(--admin-accent-dark, #1b5e20);
+  filter: none;
+}
+
+.lookup-data-management .deactivate-button {
+  color: #475569;
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+.lookup-data-management .deactivate-button:hover {
+  color: #1e293b;
+  border-color: #94a3b8;
+  background: #f1f5f9;
+}
+
+.lookup-data-management .delete-button,
+.curriculum-management .delete-button,
+.academic-management .delete-button,
+.elective-slot-management .delete-button,
+.user-management .delete-button,
+.credit-evaluation-management .delete-button {
+  color: #b91c1c;
+  border-color: rgba(185, 28, 28, 0.35);
+  background: #fff;
+}
+
+.lookup-data-management .delete-button:hover,
+.curriculum-management .delete-button:hover,
+.academic-management .delete-button:hover,
+.elective-slot-management .delete-button:hover,
+.user-management .delete-button:hover,
+.credit-evaluation-management .delete-button:hover {
+  background: #fef2f2;
+  border-color: #f87171;
+}
+
+/* Keep row action buttons side-by-side across admin tables */
+.lookup-data-management .actions,
+.curriculum-management .actions,
+.academic-management .actions,
+.elective-slot-management .actions,
+.user-management .actions,
+.credit-evaluation-management .actions,
+.backup-management .actions {
+  display: inline-flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.lookup-data-management .edit-button,
+.lookup-data-management .delete-button,
+.lookup-data-management .deactivate-button,
+.lookup-data-management .activate-button,
+.lookup-data-management .lookup-action,
+.curriculum-management .edit-button,
+.curriculum-management .delete-button,
+.academic-management .edit-button,
+.academic-management .delete-button,
+.elective-slot-management .edit-button,
+.elective-slot-management .delete-button,
+.elective-slot-management .manage-button,
+.elective-slot-management .remove-button,
+.user-management .edit-button,
+.user-management .delete-button,
+.user-management .status-toggle-button,
+.credit-evaluation-management .edit-button,
+.credit-evaluation-management .delete-button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .lookup-data-management .app-dialog,
+  .curriculum-management .modal-content,
+  .academic-management .modal-content,
+  .elective-slot-management .modal-content,
+  .user-management .modal-content,
+  .user-management .app-dialog,
+  .credit-evaluation-management .modal-content {
+    width: 100%;
+    max-height: 92vh;
+    border-radius: 14px;
+  }
+
+  .lookup-data-management .form-actions,
+  .curriculum-management .modal-actions,
+  .academic-management .modal-actions,
+  .elective-slot-management .modal-actions,
+  .user-management .modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .lookup-data-management .form-actions > *,
+  .curriculum-management .modal-actions > *,
+  .academic-management .modal-actions > *,
+  .elective-slot-management .modal-actions > *,
+  .user-management .modal-actions > * {
+    width: 100%;
+  }
+}

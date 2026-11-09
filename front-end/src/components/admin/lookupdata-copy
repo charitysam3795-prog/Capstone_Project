@@ -1,0 +1,1212 @@
+import React, { useState, useEffect } from 'react';
+import api from '../../api/axios';
+import './LookupDataManagement.css';
+
+// Central config for all admin lookup tabs so labels and basic behavior
+// can be changed in one place (easier for panel demo changes).
+const TAB_DEFINITIONS = [
+  { key: 'programs', label: 'Programs', isLookup: true, showInMainTabs: true },
+  { key: 'departments', label: 'Departments', isLookup: true, showInMainTabs: true },
+  { key: 'subjects', label: 'Subjects', isLookup: true, showInMainTabs: true },
+  { key: 'yearLevels', label: 'Year Levels', isLookup: true, showInMainTabs: true },
+  { key: 'semesters', label: 'Semesters', isLookup: true, showInMainTabs: true },
+  { key: 'campus', label: 'Campus', isLookup: true, showInMainTabs: true },
+  { key: 'sections', label: 'Sections', isLookup: true, showInMainTabs: true },
+  { key: 'roles', label: 'Roles', isLookup: true, showInMainTabs: true },
+  { key: 'requisites', label: 'Requisites', isLookup: true, showInMainTabs: true },
+  { key: 'academicYears', label: 'Academic Year', isLookup: true, showInMainTabs: true },
+  { key: 'tracks', label: 'Tracks', isLookup: true, showInMainTabs: true },
+  { key: 'curriculumHeaders', label: 'Curriculum Headers', isLookup: true, showInMainTabs: true },
+  { key: 'offeredSubjects', label: 'Offered Subjects', isLookup: true, showInMainTabs: true },
+  // Elective subjects live inside the Tracks area as a sub-tab
+  { key: 'electiveSubjects', label: 'Elective Subjects', isLookup: true, showInMainTabs: false },
+];
+
+const MAIN_TABS = TAB_DEFINITIONS.filter((t) => t.showInMainTabs);
+const LOOKUP_TAB_KEYS = TAB_DEFINITIONS.filter((t) => t.isLookup).map((t) => t.key);
+const TAB_LABEL_MAP = TAB_DEFINITIONS.reduce((acc, tab) => {
+  acc[tab.key] = tab.label;
+  return acc;
+}, {});
+
+const LookupDataManagement = () => {
+  const [lookupData, setLookupData] = useState({
+    programs: [],
+    subjects: [],
+    departments: [],
+    yearLevels: [],
+    semesters: [],
+    prerequisites: [],
+    corequisites: [],
+    roles: [],
+    campus: [],
+    requisites: [],
+    sections: [],
+    academicYears: [],
+    tracks: [],
+    curriculumHeaders: [],
+    offeredSubjects: [],
+    electiveSubjects: [],
+  });
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState('programs');
+  const [showModal, setShowModal] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const [formData, setFormData] = useState({});
+
+  useEffect(() => {
+    fetchLookupData();
+  }, []);
+
+  const fetchLookupData = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get('/curriculum/lookup/data');
+      console.log('Lookup data response:', response.data);
+
+      // Normalize and ensure roles, sections, and campus are present. Some backends expose these
+      // on dedicated endpoints. If the combined lookup endpoint doesn't include them, try to fetch them separately.
+      let normalized = response.data || {};
+
+      // Fetch roles if not present
+      if (!normalized.roles) {
+        try {
+          const rolesResp = await api.get('/lookup/roles');
+          normalized.roles = Array.isArray(rolesResp.data) ? rolesResp.data : (rolesResp.data?.data || rolesResp.data || []);
+          console.log('Fetched roles from /lookup/roles:', normalized.roles);
+        } catch (rolesError) {
+          console.warn('Could not fetch roles from /lookup/roles:', rolesError);
+        }
+      }
+
+      // Fetch sections if not present
+      if (!normalized.sections) {
+        try {
+          const sectionsResp = await api.get('/lookup/sections');
+          normalized.sections = Array.isArray(sectionsResp.data) ? sectionsResp.data : (sectionsResp.data?.data || sectionsResp.data || []);
+          console.log('Fetched sections from /lookup/sections:', normalized.sections);
+        } catch (sectionsError) {
+          console.warn('Could not fetch sections from /lookup/sections:', sectionsError);
+        }
+      }
+
+      // Fetch campus if not present
+      if (!normalized.campus && !normalized.campuses) {
+        try {
+          const campusResp = await api.get('/lookup/campus');
+          const campusData = Array.isArray(campusResp.data) ? campusResp.data : (campusResp.data?.data || campusResp.data || []);
+          normalized.campus = campusData;
+          normalized.campuses = campusData; // Support both singular and plural
+          console.log('Fetched campus from /lookup/campus:', campusData);
+        } catch (campusError) {
+          console.warn('Could not fetch campus from /lookup/campus:', campusError);
+        }
+      }
+
+      // Fetch academic years if not present
+      if (!normalized.academicYears) {
+        try {
+          const academicYearsResp = await api.get('/lookup/academic-years');
+          normalized.academicYears = Array.isArray(academicYearsResp.data) ? academicYearsResp.data : (academicYearsResp.data?.data || academicYearsResp.data || []);
+          console.log('Fetched academic years from /lookup/academic-years:', normalized.academicYears);
+        } catch (academicYearsError) {
+          console.warn('Could not fetch academic years from /lookup/academic-years:', academicYearsError);
+        }
+      }
+
+      // Fetch departments if not present
+      if (!normalized.departments) {
+        try {
+          const departmentsResp = await api.get('/lookup/departments');
+          normalized.departments = Array.isArray(departmentsResp.data) ? departmentsResp.data : (departmentsResp.data?.data || departmentsResp.data || []);
+          console.log('Fetched departments from /lookup/departments:', normalized.departments);
+        } catch (departmentsError) {
+          console.warn('Could not fetch departments from /lookup/departments:', departmentsError);
+        }
+      }
+
+      // Fetch tracks if not present
+      if (!normalized.tracks) {
+        try {
+          const tracksResp = await api.get('/lookup/tracks');
+          normalized.tracks = Array.isArray(tracksResp.data) ? tracksResp.data : (tracksResp.data?.data || tracksResp.data || []);
+          console.log('Fetched tracks from /lookup/tracks:', normalized.tracks);
+        } catch (tracksError) {
+          console.warn('Could not fetch tracks from /lookup/tracks:', tracksError);
+        }
+      }
+
+      // Fetch curriculum headers if not present
+      if (!normalized.curriculumHeaders) {
+        try {
+          const curriculumHeadersResp = await api.get('/lookup/curriculum-headers');
+          normalized.curriculumHeaders = Array.isArray(curriculumHeadersResp.data) ? curriculumHeadersResp.data : (curriculumHeadersResp.data?.data || curriculumHeadersResp.data || []);
+          console.log('Fetched curriculum headers from /lookup/curriculum-headers:', normalized.curriculumHeaders);
+        } catch (curriculumHeadersError) {
+          console.warn('Could not fetch curriculum headers from /lookup/curriculum-headers:', curriculumHeadersError);
+        }
+      }
+
+      // Fetch offered subjects if not present
+      if (!normalized.offeredSubjects) {
+        try {
+          const offeredSubjectsResp = await api.get('/lookup/offered-subjects');
+          normalized.offeredSubjects = Array.isArray(offeredSubjectsResp.data) ? offeredSubjectsResp.data : (offeredSubjectsResp.data?.data || offeredSubjectsResp.data || []);
+          console.log('Fetched offered subjects from /lookup/offered-subjects:', normalized.offeredSubjects);
+        } catch (offeredSubjectsError) {
+          console.warn('Could not fetch offered subjects from /lookup/offered-subjects:', offeredSubjectsError);
+        }
+      }
+
+      // Fetch elective subjects if not present
+      if (!normalized.electiveSubjects) {
+        try {
+          const electiveSubjectsResp = await api.get('/lookup/elective-subjects');
+          normalized.electiveSubjects = Array.isArray(electiveSubjectsResp.data) ? electiveSubjectsResp.data : (electiveSubjectsResp.data?.data || electiveSubjectsResp.data || []);
+          console.log('Fetched elective subjects from /lookup/elective-subjects:', normalized.electiveSubjects);
+        } catch (electiveSubjectsError) {
+          console.warn('Could not fetch elective subjects from /lookup/elective-subjects:', electiveSubjectsError);
+        }
+      }
+
+      setLookupData(normalized);
+    } catch (error) {
+      console.error('Error fetching lookup data:', error);
+      setError('Failed to fetch lookup data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAdd = () => {
+    setEditingItem(null);
+    setFormData(getDefaultFormData(activeTab));
+    setShowModal(true);
+  };
+
+  const handleEdit = (item) => {
+    setEditingItem(item);
+    setFormData(getFormDataFromItem(activeTab, item));
+    setShowModal(true);
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm(`Are you sure you want to delete this ${formatTabTitle(activeTab).toLowerCase()}?`)) {
+      return;
+    }
+
+    try {
+      // Determine the correct API endpoint and prefix for each tab
+      let apiEndpoint = activeTab;
+      let prefix = '';
+
+      // Tabs backed by the lookup controller live under /lookup
+      if (LOOKUP_TAB_KEYS.includes(activeTab)) {
+        prefix = 'lookup';
+      }
+
+      // Handle special path name cases
+      if (activeTab === 'yearLevels') {
+        apiEndpoint = 'year-levels';
+      } else if (activeTab === 'academicYears') {
+        apiEndpoint = 'academic-years';
+      } else if (activeTab === 'curriculumHeaders') {
+        apiEndpoint = 'curriculum-headers';
+      } else if (activeTab === 'offeredSubjects') {
+        apiEndpoint = 'offered-subjects';
+      } else if (activeTab === 'electiveSubjects') {
+        apiEndpoint = 'elective-subjects';
+      }
+
+      const url = `/${prefix ? prefix + '/' : ''}${apiEndpoint}/${id}`;
+      await api.delete(url);
+      fetchLookupData();
+    } catch (error) {
+      const data = error.response?.data;
+      const messages = data?.messages || data?.errors;
+      const validationText = messages
+        ? Object.values(messages)
+            .flat()
+            .filter(Boolean)
+            .join(' ')
+        : '';
+      setError(
+        validationText ||
+          data?.message ||
+          `Failed to delete ${formatTabTitle(activeTab).toLowerCase()}`
+      );
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    try {
+      // Determine the correct API endpoint and prefix for each tab
+      let apiEndpoint = activeTab;
+      let prefix = '';
+      let itemId = editingItem?.id || editingItem?.[`${activeTab.slice(0, -1)}_id`];
+
+      // Tabs backed by the lookup controller live under /lookup
+      if (LOOKUP_TAB_KEYS.includes(activeTab)) {
+        prefix = 'lookup';
+      }
+
+      // Handle special path name cases and id fields
+      if (activeTab === 'yearLevels') {
+        apiEndpoint = 'year-levels';
+        itemId = editingItem?.id || editingItem?.year_level_id;
+      } else if (activeTab === 'campus') {
+        apiEndpoint = 'campus';
+        itemId = editingItem?.campus_id || editingItem?.id;
+      } else if (activeTab === 'sections') {
+        apiEndpoint = 'sections';
+        itemId = editingItem?.section_id || editingItem?.id;
+      } else if (activeTab === 'academicYears') {
+        apiEndpoint = 'academic-years';
+        itemId = editingItem?.id || editingItem?.academic_year_id;
+      } else if (activeTab === 'curriculumHeaders') {
+        apiEndpoint = 'curriculum-headers';
+        itemId = editingItem?.id || editingItem?.curriculum_header_id;
+      } else if (activeTab === 'offeredSubjects') {
+        apiEndpoint = 'offered-subjects';
+        itemId = editingItem?.id || editingItem?.offered_subject_id;
+      } else if (activeTab === 'electiveSubjects') {
+        apiEndpoint = 'elective-subjects';
+        itemId = editingItem?.id || editingItem?.elective_subject_id;
+      } else if (activeTab === 'tracks') {
+        itemId = editingItem?.id || editingItem?.track_id;
+      }
+
+      const base = `/${prefix ? prefix + '/' : ''}${apiEndpoint}`;
+
+      if (editingItem && itemId) {
+        await api.put(`${base}/${itemId}`, formData);
+      } else {
+        await api.post(base, formData);
+      }
+
+      setShowModal(false);
+      fetchLookupData();
+    } catch (error) {
+      const data = error.response?.data;
+      const messages = data?.messages || data?.errors;
+      const validationText = messages
+        ? Object.values(messages)
+            .flat()
+            .filter(Boolean)
+            .join(' ')
+        : '';
+      setError(
+        validationText ||
+          data?.message ||
+          `Failed to ${editingItem ? 'update' : 'create'} ${formatTabTitle(activeTab).toLowerCase()}`
+      );
+    }
+  };
+
+  const getDefaultFormData = (section) => {
+    const defaults = {
+      programs: { department_id: '', campus_id: '', program_code: '', program_name: '', total_units_required: '' },
+      departments: { campus_id: '', department_name: '', department_code: '' },
+      subjects: { subject_code: '', subject_name: '', units: 3, hours: 3 },
+      yearLevels: { year_level: '' },
+      semesters: { semester_name: '', status: '' },
+      roles: { role_name: '', description: '', access_level: '' },
+      campus: { campus_name: '' },
+      sections: { section_id: '', name: '' },
+      academicYears: { name: '', status: '' },
+      requisites: { requisite_type: '', subject_id: '', requisites_subject_id: '' },
+      tracks: { track_code: '', track_name: '' },
+      curriculumHeaders: { program_id: '', Effective_Year: '', description: '' },
+      offeredSubjects: { subject_id: '', academic_year_id: '', semester_id: '', program_id: '', track_id: '', year_level_id: '', status: '' },
+      electiveSubjects: { track_id: '', subject_id: '', description: '' },
+    };
+    return defaults[section] || {};
+  };
+
+  const getFormDataFromItem = (section, item) => {
+    if (section === 'programs') {
+      return {
+        department_id: item.department_id ?? '',
+        campus_id: item.campus_id ?? '',
+        program_code: item.program_code ?? '',
+        program_name: item.program_name ?? '',
+        total_units_required: item.total_units_required ?? '',
+      };
+    }
+
+    if (section === 'departments') {
+      return {
+        campus_id: item.campus_id ?? '',
+        department_name: item.department_name ?? '',
+        department_code: item.department_code ?? '',
+      };
+    }
+
+    if (section === 'semesters') {
+      return {
+        semester_name: item.semester_name ?? '',
+        status: item.status ?? '',
+      };
+    }
+
+    if (section === 'academicYears') {
+      return {
+        name: item.name ?? item.academic_year_name ?? '',
+        status: item.status ?? '',
+      };
+    }
+
+    if (section === 'requisites') {
+      return {
+        requisite_type: item.requisite_type ?? '',
+        subject_id: item.subject_id ?? '',
+        requisites_subject_id: item.requisites_subject_id ?? item.required_subject_id ?? '',
+      };
+    }
+
+    return { ...item };
+  };
+
+  // Helper to correctly format the tab title (uses TAB_DEFINITIONS so you can
+  // rename tabs by changing the config at the top of this file).
+  const formatTabTitle = (tab) => {
+    if (TAB_LABEL_MAP[tab]) {
+      return TAB_LABEL_MAP[tab];
+    }
+
+    // Fallback: make a simple singularized, capitalized version
+    const singular = tab.slice(0, -1); // Remove trailing 's'
+    return singular.charAt(0).toUpperCase() + singular.slice(1);
+  };
+
+  const renderForm = () => {
+    const formFields = {
+      programs: (
+        <>
+          <div className="form-group">
+            <label>Department</label>
+            <select
+              value={formData.department_id || ''}
+              onChange={(e) => setFormData({ ...formData, department_id: e.target.value ? parseInt(e.target.value) : '' })}
+              required
+            >
+              <option value="">Select Department</option>
+              {(lookupData.departments || []).map((dept) => (
+                <option key={dept.department_id} value={dept.department_id}>
+                  {dept.department_name} ({dept.department_code})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label>Campus</label>
+            <select
+              value={formData.campus_id || ''}
+              onChange={(e) => setFormData({ ...formData, campus_id: e.target.value ? parseInt(e.target.value) : '' })}
+              required
+            >
+              <option value="">Select Campus</option>
+              {(lookupData.campus || lookupData.campuses || []).map((campus) => (
+                <option key={campus.campus_id} value={campus.campus_id}>
+                  {campus.campus_name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label>Program Code</label>
+            <input
+              type="text"
+              value={formData.program_code || ''}
+              onChange={(e) => setFormData({ ...formData, program_code: e.target.value })}
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>Program Name</label>
+            <input
+              type="text"
+              value={formData.program_name || ''}
+              onChange={(e) => setFormData({ ...formData, program_name: e.target.value })}
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>Total Units Required</label>
+            <input
+              type="number"
+              min="0"
+              value={formData.total_units_required === null || formData.total_units_required === undefined ? '' : formData.total_units_required}
+              onChange={(e) => setFormData({ ...formData, total_units_required: e.target.value === '' ? '' : parseInt(e.target.value) })}
+            />
+          </div>
+        </>
+      ),
+      departments: (
+        <>
+          <div className="form-group">
+            <label>Campus</label>
+            <select
+              value={formData.campus_id || ''}
+              onChange={(e) => setFormData({ ...formData, campus_id: e.target.value ? parseInt(e.target.value) : '' })}
+            >
+              <option value="">Select Campus (Optional)</option>
+              {(lookupData.campus || lookupData.campuses || []).map((campus) => (
+                <option key={campus.campus_id} value={campus.campus_id}>
+                  {campus.campus_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Department Name</label>
+            <input
+              type="text"
+              value={formData.department_name || ''}
+              onChange={(e) => setFormData({ ...formData, department_name: e.target.value })}
+              placeholder="e.g., College of Engineering Architecture"
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>Department Code</label>
+            <input
+              type="text"
+              value={formData.department_code || ''}
+              onChange={(e) => setFormData({ ...formData, department_code: e.target.value })}
+              placeholder="e.g., CEA"
+              required
+            />
+          </div>
+        </>
+      ),
+      subjects: (
+        <>
+          <div className="form-group">
+            <label>Subject Code</label>
+            <input
+              type="text"
+              value={formData.subject_code || ''}
+              onChange={(e) => setFormData({ ...formData, subject_code: e.target.value })}
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>Subject Name</label>
+            <input
+              type="text"
+              value={formData.subject_name || ''}
+              onChange={(e) => setFormData({ ...formData, subject_name: e.target.value })}
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>Units</label>
+            <input
+              type="number"
+              min="1"
+              max="10"
+              value={formData.units || 3}
+              onChange={(e) => setFormData({ ...formData, units: parseInt(e.target.value) })}
+            />
+          </div>
+          <div className="form-group">
+            <label>Hours</label>
+            <input
+              type="number"
+              min="1"
+              max="100"
+              value={formData.hours || 3}
+              onChange={(e) => setFormData({ ...formData, hours: parseInt(e.target.value) })}
+            />
+          </div>
+        </>
+      ),
+      yearLevels: (
+        <>
+          <div className="form-group">
+            <label>Year Level</label>
+            <input
+              type="text"
+              value={formData.year_level || ''}
+              onChange={(e) => setFormData({ ...formData, year_level: e.target.value })}
+              placeholder="e.g., First Year, Second Year"
+              required
+            />
+          </div>
+        </>
+      ),
+      semesters: (
+        <>
+          <div className="form-group">
+            <label>Semester Name</label>
+            <input
+              type="text"
+              value={formData.semester_name || ''}
+              onChange={(e) => setFormData({ ...formData, semester_name: e.target.value })}
+              placeholder="e.g., First Semester, Second Semester"
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>Status</label>
+            <select
+              value={formData.status || ''}
+              onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+            >
+              <option value="">Select Status (Optional)</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+        </>
+      ),
+      campus: (
+        <>
+          <div className="form-group">
+            <label>Campus Name</label>
+            <input
+              type="text"
+              value={formData.campus_name || ''}
+              onChange={(e) => setFormData({ ...formData, campus_name: e.target.value })}
+              required
+            />
+          </div>
+        </>
+      ),
+      roles: (
+        <>
+          <div className="form-group">
+            <label>Role Name</label>
+            <input
+              type="text"
+              value={formData.role_name || ''}
+              onChange={(e) => setFormData({ ...formData, role_name: e.target.value })}
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>Access Level</label>
+            <input
+              type="number"
+              value={formData.access_level || ''}
+              onChange={(e) => setFormData({ ...formData, access_level: e.target.value ? parseInt(e.target.value) : '' })}
+              placeholder="e.g., 10"
+            />
+          </div>
+          <div className="form-group">
+            <label>Description</label>
+            <textarea
+              value={formData.description || ''}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+            />
+          </div>
+        </>
+      ),
+      sections: (
+        <>
+          <div className="form-group">
+            <label>Section Name</label>
+            <input
+              type="text"
+              value={formData.name || ''}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              required
+            />
+          </div>
+        </>
+      ),
+      academicYears: (
+        <>
+          <div className="form-group">
+            <label>Academic Year Name</label>
+            <input
+              type="text"
+              value={formData.name || ''}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="e.g., 2024-2025"
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>Status</label>
+            <select
+              value={formData.status || ''}
+              onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+            >
+              <option value="">Select Status (Optional)</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+        </>
+      ),
+      requisites: (
+        <>
+          <div className="form-group">
+            <label>Requisite Type</label>
+            <select
+              value={formData.requisite_type || ''}
+              onChange={(e) => setFormData({ ...formData, requisite_type: e.target.value })}
+              required
+            >
+              <option value="">Select Type</option>
+              <option value="prerequisite">Prerequisite</option>
+              <option value="corequisite">Corequisite</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Subject</label>
+            <select
+              value={formData.subject_id || ''}
+              onChange={(e) => setFormData({ ...formData, subject_id: e.target.value ? parseInt(e.target.value) : '' })}
+              required
+            >
+              <option value="">Select Subject</option>
+              {(lookupData.subjects || []).map((subject) => (
+                <option key={subject.subject_id} value={subject.subject_id}>
+                  {subject.subject_code} - {subject.subject_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Required Subject</label>
+            <select
+              value={formData.requisites_subject_id || ''}
+              onChange={(e) => setFormData({ ...formData, requisites_subject_id: e.target.value ? parseInt(e.target.value) : '' })}
+              required
+            >
+              <option value="">Select Required Subject</option>
+              {(lookupData.subjects || []).map((subject) => (
+                <option key={subject.subject_id} value={subject.subject_id}>
+                  {subject.subject_code} - {subject.subject_name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </>
+      ),
+      tracks: (
+        <>
+          <div className="form-group">
+            <label>Track Code</label>
+            <input
+              type="text"
+              value={formData.track_code || ''}
+              onChange={(e) => setFormData({ ...formData, track_code: e.target.value })}
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>Track Name</label>
+            <input
+              type="text"
+              value={formData.track_name || ''}
+              onChange={(e) => setFormData({ ...formData, track_name: e.target.value })}
+              required
+            />
+          </div>
+        </>
+      ),
+      curriculumHeaders: (
+        <>
+          <div className="form-group">
+            <label>Program</label>
+            <select
+              value={formData.program_id || ''}
+              onChange={(e) => setFormData({ ...formData, program_id: e.target.value ? parseInt(e.target.value) : '' })}
+              required
+            >
+              <option value="">Select Program</option>
+              {(lookupData.programs || []).map((program) => (
+                <option key={program.program_id} value={program.program_id}>
+                  {program.program_code} - {program.program_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Effective Year</label>
+            <input
+              type="number"
+              value={formData.Effective_Year || ''}
+              onChange={(e) => setFormData({ ...formData, Effective_Year: e.target.value ? parseInt(e.target.value) : '' })}
+              placeholder="e.g., 2024"
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label>Description</label>
+            <textarea
+              value={formData.description || ''}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              placeholder="e.g., Based on CMO No.25 series of 2015"
+            />
+          </div>
+        </>
+      ),
+      offeredSubjects: (
+        <>
+          <div className="form-group">
+            <label>Subject</label>
+            <select
+              value={formData.subject_id || ''}
+              onChange={(e) => setFormData({ ...formData, subject_id: e.target.value ? parseInt(e.target.value) : '' })}
+              required
+            >
+              <option value="">Select Subject</option>
+              {(lookupData.subjects || []).map((subject) => (
+                <option key={subject.subject_id} value={subject.subject_id}>
+                  {subject.subject_code} - {subject.subject_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Academic Year</label>
+            <select
+              value={formData.academic_year_id || ''}
+              onChange={(e) => setFormData({ ...formData, academic_year_id: e.target.value ? parseInt(e.target.value) : '' })}
+              required
+            >
+              <option value="">Select Academic Year</option>
+              {(lookupData.academicYears || []).map((ay) => (
+                <option key={ay.academic_year_id || ay.id} value={ay.academic_year_id || ay.id}>
+                  {ay.name || ay.academic_year_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Semester</label>
+            <select
+              value={formData.semester_id || ''}
+              onChange={(e) => setFormData({ ...formData, semester_id: e.target.value ? parseInt(e.target.value) : '' })}
+              required
+            >
+              <option value="">Select Semester</option>
+              {(lookupData.semesters || []).map((sem) => (
+                <option key={sem.semester_id} value={sem.semester_id}>
+                  {sem.semester_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Program</label>
+            <select
+              value={formData.program_id || ''}
+              onChange={(e) => setFormData({ ...formData, program_id: e.target.value ? parseInt(e.target.value) : '' })}
+              required
+            >
+              <option value="">Select Program</option>
+              {(lookupData.programs || []).map((program) => (
+                <option key={program.program_id} value={program.program_id}>
+                  {program.program_code} - {program.program_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Track (Optional)</label>
+            <select
+              value={formData.track_id || ''}
+              onChange={(e) => setFormData({ ...formData, track_id: e.target.value ? parseInt(e.target.value) : '' })}
+            >
+              <option value="">Select Track (Optional)</option>
+              {(lookupData.tracks || []).map((track) => (
+                <option key={track.track_id} value={track.track_id}>
+                  {track.track_code} - {track.track_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Year Level (Optional)</label>
+            <select
+              value={formData.year_level_id || ''}
+              onChange={(e) => setFormData({ ...formData, year_level_id: e.target.value ? parseInt(e.target.value) : '' })}
+            >
+              <option value="">Select Year Level (Optional)</option>
+              {(lookupData.yearLevels || []).map((yl) => (
+                <option key={yl.year_level_id} value={yl.year_level_id}>
+                  {yl.year_level}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Status</label>
+            <select
+              value={formData.status || ''}
+              onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+            >
+              <option value="">Select Status (Optional)</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+        </>
+      ),
+      electiveSubjects: (
+        <>
+          <div className="form-group">
+            <label>Track</label>
+            <select
+              value={formData.track_id || ''}
+              onChange={(e) => setFormData({ ...formData, track_id: e.target.value ? parseInt(e.target.value) : '' })}
+              required
+            >
+              <option value="">Select Track</option>
+              {(lookupData.tracks || []).map((track) => (
+                <option key={track.track_id} value={track.track_id}>
+                  {track.track_code} - {track.track_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Subject</label>
+            <select
+              value={formData.subject_id || ''}
+              onChange={(e) => setFormData({ ...formData, subject_id: e.target.value ? parseInt(e.target.value) : '' })}
+              required
+            >
+              <option value="">Select Subject</option>
+              {(lookupData.subjects || []).map((subject) => (
+                <option key={subject.subject_id} value={subject.subject_id}>
+                  {subject.subject_code} - {subject.subject_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Description</label>
+            <textarea
+              value={formData.description || ''}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+            />
+          </div>
+        </>
+      ),
+    };
+
+    return formFields[activeTab] || null;
+  };
+
+  const renderTable = (section, data) => {
+    const tableHeaders = {
+      programs: ['Program Code', 'Program Name', 'Department', 'Campus', 'Total Units'],
+      departments: ['Campus', 'Department Name', 'Department Code'],
+      subjects: ['Subject Code', 'Subject Name', 'Units', 'Hours'],
+      yearLevels: ['Year Level'],
+      semesters: ['Semester Name', 'Status'],
+      roles: ['Role Name', 'Access Level', 'Description'],
+      campus: ['ID', 'Campus Name'],
+      sections: ['Section ID', 'Section Name'],
+      academicYears: ['Academic Year Name', 'Status'],
+      requisites: ['Type', 'Subject', 'Required Subject'],
+      tracks: ['Track Code', 'Track Name'],
+      curriculumHeaders: ['Program', 'Effective Year', 'Description'],
+      offeredSubjects: ['Subject', 'Academic Year', 'Semester', 'Program', 'Track', 'Year Level', 'Status'],
+      electiveSubjects: ['Track', 'Subject', 'Description'],
+    };
+
+    const getRowData = (section, item) => {
+      const rowData = {
+        programs: [
+          item.program_code,
+          item.program_name,
+          item.department?.department_name || item.department_name || item.department_id || '-',
+          item.campus?.campus_name || item.campus_name || item.campus_id || '-',
+          (item.total_units_required === null || item.total_units_required === undefined) ? '-' : item.total_units_required,
+        ],
+        departments: [
+          (() => {
+            const campusId = item.campus?.campus_id || item.campus_id;
+            const campus = lookupData.campus?.find(c => c.campus_id === campusId);
+            return campus ? campus.campus_name : (campusId || '-');
+          })(),
+          item.department_name,
+          item.department_code,
+        ],
+        subjects: [
+          item.subject_code,
+          item.subject_name,
+          (item.units === null || item.units === undefined) ? '-' : item.units,
+          (item.hours === null || item.hours === undefined) ? '-' : item.hours
+        ],
+        yearLevels: [item.year_level],
+        semesters: [item.semester_name, item.status || '-'],
+        roles: [
+          item.role_name || item.name || '-',
+          (item.access_level === null || item.access_level === undefined) ? '-' : item.access_level,
+          item.description || '-'
+        ],
+        campus: [item.campus_id, item.campus_name],
+        sections: [item.section_id || item.id || '-', item.name || '-'],
+        academicYears: [item.name || item.academic_year_name || '-', item.status || '-'],
+        requisites: [
+          item.requisite_type || item.type || '-',
+          (() => {
+            const subjectId = item.subject?.subject_id || item.subject_id;
+            const subject = lookupData.subjects?.find(s => s.subject_id === subjectId);
+            return subject ? `${subject.subject_code} - ${subject.subject_name}` : subjectId || '-';
+          })(),
+          (() => {
+            const requiredSubjectId = item.requiredSubject?.subject_id || item.requisites_subject_id || item.required_subject_id;
+            const requiredSubject = lookupData.subjects?.find(s => s.subject_id === requiredSubjectId);
+            return requiredSubject ? `${requiredSubject.subject_code} - ${requiredSubject.subject_name}` : requiredSubjectId || '-';
+          })()
+        ],
+        tracks: [
+          item.track_code,
+          item.track_name,
+        ],
+        curriculumHeaders: [
+          (() => {
+            const programId = item.program?.program_id || item.program_id;
+            const program = lookupData.programs?.find(p => p.program_id === programId);
+            return program ? `${program.program_code} - ${program.program_name}` : programId || '-';
+          })(),
+          item.Effective_Year || '-',
+          item.description || '-',
+        ],
+        offeredSubjects: [
+          (() => {
+            const subjectId = item.subject?.subject_id || item.subject_id;
+            const subject = lookupData.subjects?.find(s => s.subject_id === subjectId);
+            return subject ? `${subject.subject_code} - ${subject.subject_name}` : subjectId || '-';
+          })(),
+          (() => {
+            const ayId = item.academicYear?.academic_year_id || item.academic_year_id;
+            const ay = lookupData.academicYears?.find(a => (a.academic_year_id || a.id) === ayId);
+            return ay ? (ay.name || ay.academic_year_name) : ayId || '-';
+          })(),
+          (() => {
+            const semId = item.semester?.semester_id || item.semester_id;
+            const sem = lookupData.semesters?.find(s => s.semester_id === semId);
+            return sem ? sem.semester_name : semId || '-';
+          })(),
+          (() => {
+            const programId = item.program?.program_id || item.program_id;
+            const program = lookupData.programs?.find(p => p.program_id === programId);
+            return program ? `${program.program_code} - ${program.program_name}` : programId || '-';
+          })(),
+          (() => {
+            const trackId = item.track?.track_id || item.track_id;
+            const track = lookupData.tracks?.find(t => t.track_id === trackId);
+            return track ? `${track.track_code} - ${track.track_name}` : (trackId ? trackId : '-');
+          })(),
+          (() => {
+            const ylId = item.yearLevel?.year_level_id || item.year_level_id;
+            const yl = lookupData.yearLevels?.find(y => y.year_level_id === ylId);
+            return yl ? yl.year_level : (ylId ? ylId : '-');
+          })(),
+          item.status || '-',
+        ],
+        electiveSubjects: [
+          (() => {
+            const trackId = item.track?.track_id || item.track_id;
+            const track = lookupData.tracks?.find(t => t.track_id === trackId);
+            return track ? `${track.track_code} - ${track.track_name}` : trackId || '-';
+          })(),
+          (() => {
+            const subjectId = item.subject?.subject_id || item.subject_id;
+            const subject = lookupData.subjects?.find(s => s.subject_id === subjectId);
+            return subject ? `${subject.subject_code} - ${subject.subject_name}` : subjectId || '-';
+          })(),
+          item.description || '-',
+        ],
+      };
+      return rowData[section] || [];
+    };
+
+    return (
+      <div className="table-section">
+        <div className="section-header">
+          <h3>{formatTabTitle(section)}</h3>
+          <button className="add-button" onClick={handleAdd}>
+            Add {formatTabTitle(section)}
+          </button>
+        </div>
+        <div className="table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                {tableHeaders[section].map((header, index) => (
+                  <th key={index}>{header}</th>
+                ))}
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.length === 0 ? (
+                <tr>
+                  <td colSpan={tableHeaders[section].length + 1} className="no-data">
+                    No {section === 'academicYears' ? 'Academic Years' : section} found
+                  </td>
+                </tr>
+              ) : (
+                data.map((item, index) => (
+                  <tr key={item.id || item[`${section.slice(0, -1)}_id`] || index}>
+                    {getRowData(section, item).map((cell, cellIndex) => (
+                      <td key={cellIndex}>{cell}</td>
+                    ))}
+                    <td className="actions">
+                      <button
+                        className="edit-button"
+                        onClick={() => handleEdit(item)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="delete-button"
+                        onClick={() => {
+                          let deleteId;
+                          if (section === 'campus') {
+                            deleteId = item.campus_id || item.id;
+                          } else if (section === 'sections') {
+                            deleteId = item.section_id || item.id;
+                          } else if (section === 'yearLevels') {
+                            deleteId = item.year_level_id || item.id;
+                          } else if (section === 'tracks') {
+                            deleteId = item.track_id || item.id;
+                          } else if (section === 'curriculumHeaders') {
+                            deleteId = item.curriculum_header_id || item.id;
+                          } else if (section === 'offeredSubjects') {
+                            deleteId = item.offered_subject_id || item.id;
+                          } else if (section === 'electiveSubjects') {
+                            deleteId = item.elective_subject_id || item.id;
+                          } else {
+                            deleteId = item.id || item[`${section.slice(0, -1)}_id`];
+                          }
+                          handleDelete(deleteId);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  if (loading) {
+    return <div className="loading">Loading lookup data...</div>;
+  }
+
+  return (
+    <div className="lookup-data-management">
+      <div className="management-header">
+        <h2>Lookup Data Management</h2>
+        <button className="refresh-button" onClick={fetchLookupData}>
+          Refresh Data
+        </button>
+      </div>
+
+      {error && <div className="error-message">{error}</div>}
+
+      <div className="lookup-tabs">
+        {MAIN_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            className={activeTab === tab.key ? 'tab active' : 'tab'}
+            onClick={() => setActiveTab(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {(activeTab === 'tracks' || activeTab === 'electiveSubjects') && (
+        <div className="sub-tabs">
+          <button
+            className={activeTab === 'tracks' ? 'sub-tab active' : 'sub-tab'}
+            onClick={() => setActiveTab('tracks')}
+          >
+            Tracks
+          </button>
+          <button
+            className={activeTab === 'electiveSubjects' ? 'sub-tab active' : 'sub-tab'}
+            onClick={() => setActiveTab('electiveSubjects')}
+          >
+            Elective Subjects
+          </button>
+        </div>
+      )}
+
+      <div className="tab-content">
+        {activeTab === 'programs' && renderTable('programs', lookupData.programs || [])}
+        {activeTab === 'departments' && renderTable('departments', lookupData.departments || [])}
+        {activeTab === 'subjects' && renderTable('subjects', lookupData.subjects || [])}
+        {activeTab === 'yearLevels' && renderTable('yearLevels', lookupData.yearLevels || [])}
+        {activeTab === 'semesters' && renderTable('semesters', lookupData.semesters || [])}
+        {activeTab === 'campus' && renderTable('campus', lookupData.campus || [])}
+        {activeTab === 'sections' && renderTable('sections', lookupData.sections || [])}
+        {activeTab === 'roles' && renderTable('roles', lookupData.roles || [])}
+        {activeTab === 'requisites' && renderTable('requisites', lookupData.requisites || lookupData.prerequisites || lookupData.corequisites || [])}
+        {activeTab === 'academicYears' && renderTable('academicYears', lookupData.academicYears || [])}
+        {activeTab === 'tracks' && renderTable('tracks', lookupData.tracks || [])}
+        {activeTab === 'curriculumHeaders' && renderTable('curriculumHeaders', lookupData.curriculumHeaders || [])}
+        {activeTab === 'offeredSubjects' && renderTable('offeredSubjects', lookupData.offeredSubjects || [])}
+        {activeTab === 'electiveSubjects' && renderTable('electiveSubjects', lookupData.electiveSubjects || [])}
+      </div>
+
+      {showModal && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-header">
+              <h3>
+                {editingItem ? 'Edit' : 'Add'} {formatTabTitle(activeTab)}
+              </h3>
+              <button
+                className="close-button"
+                onClick={() => {
+                  setShowModal(false);
+                  setError('');
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={handleSubmit} className="modal-form">
+              {error && <div className="error-message">{error}</div>}
+              {renderForm()}
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="cancel-button"
+                  onClick={() => {
+                    setShowModal(false);
+                    setError('');
+                  }}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="submit-button">
+                  {editingItem ? 'Update' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default LookupDataManagement;
