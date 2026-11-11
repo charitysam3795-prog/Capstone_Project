@@ -8,6 +8,18 @@ use Illuminate\Support\Facades\Auth;
 
 class AuditTrailService
 {
+    private static int $suppressDepth = 0;
+
+    public static function suppress(): void
+    {
+        self::$suppressDepth++;
+    }
+
+    public static function resume(): void
+    {
+        self::$suppressDepth = max(0, self::$suppressDepth - 1);
+    }
+
     public static function currentUserId(): ?int
     {
         $id = Auth::guard('api')->id() ?? Auth::id();
@@ -21,6 +33,10 @@ class AuditTrailService
      */
     public static function log(string $action, Model $model, ?array $oldValue, ?array $newValue): void
     {
+        if (self::$suppressDepth > 0) {
+            return;
+        }
+
         if ($model instanceof AuditLog) {
             return;
         }

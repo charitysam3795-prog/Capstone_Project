@@ -20,8 +20,12 @@ class SisGradeDeliberationImportParser
     /**
      * @return list<array<string, mixed>>
      */
-    public function parseFileToGradeRows(UploadedFile $file, ?int $overrideAcademicYearId, ?int $overrideSemesterId): array
-    {
+    public function parseFileToGradeRows(
+        UploadedFile $file,
+        ?int $overrideAcademicYearId,
+        ?int $overrideSemesterId,
+        ?string $sourceFilename = null
+    ): array {
         $reader = new ImportTabularFileReader;
         $matrix = $reader->readCellMatrix($file);
         if ($matrix === []) {
@@ -38,6 +42,8 @@ class SisGradeDeliberationImportParser
             : $this->standardDeliberationHeaders();
 
         $modalities = $this->loadModalityLookup();
+        $filename = $sourceFilename ?: $file->getClientOriginalName();
+        $campus = app(CampusFromImportFilename::class)->resolve($filename);
 
         $out = [];
         foreach ($dataRows as $idx => $cells) {
@@ -61,6 +67,7 @@ class SisGradeDeliberationImportParser
                 'grade' => $parsed['grade'],
                 'evaluation_status' => $parsed['evaluation_status'],
                 'modality_id' => $parsed['modality_id'],
+                'campus_id' => $campus['campus_id'] ?? null,
                 'enrolled_date' => null,
                 'evaluation_date' => null,
                 'inc_compliance_deadline' => null,
@@ -71,11 +78,16 @@ class SisGradeDeliberationImportParser
                 '_sis_year_level_text' => $parsed['year_level_text'],
                 '_sis_year_sem_code' => $parsed['year_sem_code'],
                 '_sis_admission_type' => $parsed['admission_type'] ?? null,
+                '_sis_campus_name' => $campus['campus_name'] ?? null,
+                '_sis_campus_code' => $campus['code'] ?? null,
+                '_sis_source_filename' => $filename,
                 '_sis_source_row' => $this->sourceRowFromCells(
                     $cells,
                     $sourceHeaders,
                     $parsed['year_level_text'],
-                    $parsed['year_sem_code']
+                    $parsed['year_sem_code'],
+                    $parsed['_resolved_grade_display'] ?? null,
+                    $parsed['_resolved_remarks_display'] ?? null
                 ),
             ];
         }
@@ -127,7 +139,9 @@ class SisGradeDeliberationImportParser
         array $cells,
         array $headers,
         ?string $normalizedYearLevelText = null,
-        ?string $normalizedYearSemCode = null
+        ?string $normalizedYearSemCode = null,
+        ?string $resolvedGradeDisplay = null,
+        ?string $resolvedRemarksDisplay = null
     ): array {
         $out = [];
         $headerCount = count($headers);
@@ -156,6 +170,37 @@ class SisGradeDeliberationImportParser
             foreach (array_keys($out) as $label) {
                 if ($this->headerKeyLooksLike($label, ['semester', 'sem'])) {
                     $out[$label] = $normalizedYearSemCode;
+                    break;
+                }
+            }
+        }
+
+        // Preview GRADE / REMARKS show what will actually be imported (header-resolved).
+        if ($resolvedGradeDisplay !== null && $resolvedGradeDisplay !== '') {
+            foreach (array_keys($out) as $label) {
+                if ($this->headerKeyLooksLike($label, [
+                    'grade',
+                    'final grade',
+                    'final_grade',
+                    'grade_final',
+                    'completion grade',
+                    'completion_grade',
+                ])) {
+                    $out[$label] = $resolvedGradeDisplay;
+                    break;
+                }
+            }
+        }
+        if ($resolvedRemarksDisplay !== null) {
+            foreach (array_keys($out) as $label) {
+                if ($this->headerKeyLooksLike($label, [
+                    'remarks',
+                    'remark',
+                    'remarks_final',
+                    'remarks final',
+                    'final remarks',
+                ])) {
+                    $out[$label] = $resolvedRemarksDisplay;
                     break;
                 }
             }
@@ -356,12 +401,14 @@ class SisGradeDeliberationImportParser
                 'course code',
             ]) ?? ''));
             $sectionCode = $g($headerMap, $cells, ['section', 'section code', 'section_code']);
+            // Always locate GRADE / REMARKS by header name (never by column position),
+            // so extra SIS columns (instructors, FE, etc.) cannot overwrite the mapping.
             $remarks = $g($headerMap, $cells, [
                 'remarks',
                 'remark',
-                'status',
                 'remarks_final',
                 'remarks final',
+                'final remarks',
             ]);
             $gradeCol = $g($headerMap, $cells, [
                 'grade',
@@ -371,10 +418,11 @@ class SisGradeDeliberationImportParser
                 'computed grade',
                 'completion grade',
                 'completion_grade',
+                're_grade',
+                're-grade',
             ]);
-            if ($gradeCol === null || trim((string) $gradeCol) === '') {
-                $gradeCol = $g($headerMap, $cells, ['grade_final', 're_grade', 're-grade']);
-            }
+            $feCol = $g($headerMap, $cells, ['fe', 'final exam', 'final_exam', 'finalexam']);
+            $resolved = $this->resolveGradeAndRemarks($gradeCol, $remarks, $feCol);
             $modalityName = $g($headerMap, $cells, ['modality', 'mode']);
             $admissionType = $g($headerMap, $cells, [
                 'admission type',
@@ -400,9 +448,14 @@ class SisGradeDeliberationImportParser
                 'subject_code' => strtoupper($subjectCode),
                 'section_code' => $sectionCode !== null && $sectionCode !== '' ? $sectionCode : null,
                 'modality_id' => $modalityId,
-                'grade' => $this->normalizeGradeValue($gradeCol),
-                'evaluation_status' => $this->normalizeEvaluationStatus($remarks, $gradeCol),
+                'grade' => $resolved['grade'],
+                'evaluation_status' => $this->normalizeEvaluationStatus(
+                    $resolved['remarks'],
+                    $resolved['grade_raw']
+                ),
                 'admission_type' => $admissionType !== null ? trim((string) $admissionType) : null,
+                '_resolved_grade_display' => $resolved['grade_display'],
+                '_resolved_remarks_display' => $resolved['remarks_display'],
             ];
         }
 
@@ -449,6 +502,11 @@ class SisGradeDeliberationImportParser
         }
 
         $modalityId = $this->modalityIdFromName($modalities, $tailParsed['modality']);
+        $resolved = $this->resolveGradeAndRemarks(
+            $tailParsed['grade'],
+            $tailParsed['remarks'],
+            $tailParsed['fe']
+        );
 
         return [
             'session' => $session,
@@ -460,9 +518,14 @@ class SisGradeDeliberationImportParser
             'subject_code' => $subjectCode,
             'section_code' => $sectionCode,
             'modality_id' => $modalityId,
-            'grade' => $this->normalizeGradeValue($tailParsed['grade']),
-            'evaluation_status' => $this->normalizeEvaluationStatus($tailParsed['remarks'], $tailParsed['grade']),
+            'grade' => $resolved['grade'],
+            'evaluation_status' => $this->normalizeEvaluationStatus(
+                $resolved['remarks'],
+                $resolved['grade_raw']
+            ),
             'admission_type' => $tailParsed['admission'] !== '' ? $tailParsed['admission'] : null,
+            '_resolved_grade_display' => $resolved['grade_display'],
+            '_resolved_remarks_display' => $resolved['remarks_display'],
         ];
     }
 
@@ -492,7 +555,9 @@ class SisGradeDeliberationImportParser
     }
 
     /**
-     * Tail from modality token: modality, enlistment, admission, gender, p1–p3, fe (optional), grade, remarks.
+     * Tail from modality token: modality, enlistment, admission, gender, then period scores…
+     * GRADE and REMARKS are always taken from the last two meaningful cells so extra
+     * columns (FE, extra instructor fields) cannot shift/overwrite them by position.
      *
      * @param  list<string>  $tail
      * @return array{modality: string, enlistment: string, admission: string, gender: string, p1: string, p2: string, p3: string, fe: ?string, grade: string, remarks: string}|null
@@ -505,37 +570,195 @@ class SisGradeDeliberationImportParser
         }
 
         $modality = trim((string) $tail[0]);
-        if ($m === 9) {
-            return [
-                'modality' => $modality,
-                'enlistment' => trim((string) $tail[1]),
-                'admission' => trim((string) $tail[2]),
-                'gender' => trim((string) $tail[3]),
-                'p1' => trim((string) $tail[4]),
-                'p2' => trim((string) $tail[5]),
-                'p3' => trim((string) $tail[6]),
-                'fe' => null,
-                'grade' => trim((string) $tail[7]),
-                'remarks' => trim((string) $tail[8]),
-            ];
+        $pair = $this->pickTrailingGradeRemarksCells($tail);
+        if ($pair === null) {
+            return null;
         }
 
-        if ($m >= 10) {
-            return [
-                'modality' => $modality,
-                'enlistment' => trim((string) $tail[1]),
-                'admission' => trim((string) $tail[2]),
-                'gender' => trim((string) $tail[3]),
-                'p1' => trim((string) $tail[4]),
-                'p2' => trim((string) $tail[5]),
-                'p3' => trim((string) $tail[6]),
-                'fe' => trim((string) $tail[7]),
-                'grade' => trim((string) $tail[8]),
-                'remarks' => trim((string) $tail[9]),
-            ];
+        return [
+            'modality' => $modality,
+            'enlistment' => trim((string) ($tail[1] ?? '')),
+            'admission' => trim((string) ($tail[2] ?? '')),
+            'gender' => trim((string) ($tail[3] ?? '')),
+            'p1' => trim((string) ($tail[4] ?? '')),
+            'p2' => trim((string) ($tail[5] ?? '')),
+            'p3' => trim((string) ($tail[6] ?? '')),
+            'fe' => $m >= 11 ? trim((string) ($tail[7] ?? '')) : ($m === 10 ? trim((string) ($tail[7] ?? '')) : null),
+            'grade' => $pair['grade'],
+            'remarks' => $pair['remarks'],
+        ];
+    }
+
+    /**
+     * Last two non-empty tail cells → grade + remarks (content-aware if swapped / NA).
+     *
+     * @param  list<string>  $tail
+     * @return array{grade: string, remarks: string}|null
+     */
+    private function pickTrailingGradeRemarksCells(array $tail): ?array
+    {
+        $meaningful = [];
+        foreach ($tail as $cell) {
+            $t = trim((string) $cell);
+            if ($t !== '') {
+                $meaningful[] = $t;
+            }
+        }
+        if (count($meaningful) < 2) {
+            return null;
         }
 
-        return null;
+        // Skip leading modality / enlistment / admission / gender so we don't
+        // accidentally treat them as remarks when the row is short.
+        $fromRight = array_slice($meaningful, -2);
+        $presumedGrade = $fromRight[0];
+        $presumedRemarks = $fromRight[1];
+
+        // Classic layout ends with GRADE then REMARKS. If GRADE is NA and REMARKS
+        // holds 1.5 (or they are swapped), resolveGradeAndRemarks fixes it later —
+        // here we still prefer rightmost two cells as that pair.
+        return [
+            'grade' => $presumedGrade,
+            'remarks' => $presumedRemarks,
+        ];
+    }
+
+    /**
+     * Prefer the GRADE header cell; if it is NA/blank, recover a numeric mark from
+     * FE or REMARKS so extra SIS columns cannot leave grade empty.
+     *
+     * @return array{
+     *   grade: ?string,
+     *   remarks: ?string,
+     *   grade_raw: ?string,
+     *   grade_display: string,
+     *   remarks_display: string
+     * }
+     */
+    private function resolveGradeAndRemarks(?string $gradeCol, ?string $remarks, ?string $feCol = null): array
+    {
+        $gradeRaw = $gradeCol !== null ? trim((string) $gradeCol) : '';
+        $remarksRaw = $remarks !== null ? trim((string) $remarks) : '';
+        $feRaw = $feCol !== null ? trim((string) $feCol) : '';
+
+        $candidates = [];
+        if ($gradeRaw !== '') {
+            $candidates[] = $gradeRaw;
+        }
+        if ($feRaw !== '') {
+            $candidates[] = $feRaw;
+        }
+        if ($remarksRaw !== '') {
+            $candidates[] = $remarksRaw;
+        }
+
+        $pickedGrade = null;
+        // 1) GRADE column when it already looks like a real mark.
+        if ($this->looksLikeNumericGrade($gradeRaw) || $this->looksLikeLetterGradeToken($gradeRaw)) {
+            $pickedGrade = $gradeRaw;
+        }
+        // 2) GRADE is NA/blank — take numeric from FE, then from REMARKS.
+        if ($pickedGrade === null && $this->isBlankOrNaGrade($gradeRaw)) {
+            if ($this->looksLikeNumericGrade($feRaw) || $this->looksLikeLetterGradeToken($feRaw)) {
+                $pickedGrade = $feRaw;
+            } elseif ($this->looksLikeNumericGrade($remarksRaw) || $this->looksLikeLetterGradeToken($remarksRaw)) {
+                $pickedGrade = $remarksRaw;
+            }
+        }
+        // 3) GRADE holds a status word (PASSED/FAILED) while REMARKS holds the mark.
+        if (
+            $pickedGrade === null
+            && $this->looksLikeStatusToken($gradeRaw)
+            && ($this->looksLikeNumericGrade($remarksRaw) || $this->looksLikeLetterGradeToken($remarksRaw))
+        ) {
+            $pickedGrade = $remarksRaw;
+            $remarksRaw = $gradeRaw;
+            $gradeRaw = $pickedGrade;
+        }
+        // 4) Last resort: first numeric-looking candidate.
+        if ($pickedGrade === null) {
+            foreach ($candidates as $candidate) {
+                if ($this->looksLikeNumericGrade($candidate) || $this->looksLikeLetterGradeToken($candidate)) {
+                    $pickedGrade = $candidate;
+                    break;
+                }
+            }
+        }
+
+        $normalized = $this->normalizeGradeValue($pickedGrade);
+        $remarksForStatus = $remarksRaw;
+        // If remarks was consumed as the grade, don't treat "1.5" as evaluation_status.
+        if (
+            $pickedGrade !== null
+            && $this->looksLikeNumericGrade($remarksRaw)
+            && strcasecmp(trim((string) $pickedGrade), trim($remarksRaw)) === 0
+        ) {
+            $remarksForStatus = $this->looksLikeStatusToken($gradeCol ?? '')
+                ? trim((string) $gradeCol)
+                : null;
+        }
+
+        return [
+            'grade' => $normalized,
+            'remarks' => $remarksForStatus !== null && $remarksForStatus !== '' ? $remarksForStatus : null,
+            'grade_raw' => $pickedGrade,
+            'grade_display' => $normalized ?? ($pickedGrade !== null ? trim((string) $pickedGrade) : ''),
+            'remarks_display' => $remarksForStatus !== null ? trim((string) $remarksForStatus) : '',
+        ];
+    }
+
+    private function isBlankOrNaGrade(?string $value): bool
+    {
+        $t = strtoupper(trim((string) $value));
+
+        return $t === '' || $t === '-' || $t === 'NA' || $t === 'N/A' || $t === 'NULL' || $t === 'NONE';
+    }
+
+    private function looksLikeNumericGrade(?string $value): bool
+    {
+        $t = trim((string) $value);
+        if ($t === '' || $this->isBlankOrNaGrade($t)) {
+            return false;
+        }
+        $t = str_replace(',', '', $t);
+        if (! is_numeric($t)) {
+            return false;
+        }
+        $n = (float) $t;
+        // PHINMA 1.00–5.00 scale, or percent-style 60–100.
+        if ($n >= 1.0 && $n <= 5.0) {
+            return true;
+        }
+        if ($n >= 60 && $n <= 100) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private function looksLikeLetterGradeToken(?string $value): bool
+    {
+        $t = strtoupper(trim((string) $value));
+        if ($t === '' || $this->isBlankOrNaGrade($t)) {
+            return false;
+        }
+
+        return in_array($t, ['P', 'F', 'INC', 'DRP', 'OD', 'NC', 'COMPLETE', 'S', 'U'], true);
+    }
+
+    private function looksLikeStatusToken(?string $value): bool
+    {
+        $t = strtolower(trim((string) $value));
+        if ($t === '') {
+            return false;
+        }
+
+        return in_array($t, [
+            'passed', 'pass', 'failed', 'fail', 'dropped', 'drop',
+            'incomplete', 'inc', 'ongoing', 'complete', 'credited', 'credit',
+        ], true)
+            || str_contains($t, 'passed')
+            || str_contains($t, 'failed');
     }
 
     /**

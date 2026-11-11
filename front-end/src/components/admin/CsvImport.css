@@ -368,6 +368,63 @@
   color: #991b1b;
 }
 
+.status-badge.excluded {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.csv-preview-filter--excluded.is-active {
+  background: #334155;
+  border-color: #334155;
+  color: #fff;
+}
+
+.preview-table tr.excluded td,
+.preview-table tr.excluded .csv-preview-sticky-col {
+  background: #f8fafc;
+}
+
+.csv-exclude-all-wrap {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.csv-exclude-row-btn {
+  display: inline-block;
+  border: 1px solid #64748b;
+  background: #fff;
+  color: #334155;
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  margin: 0 6px 4px 0;
+}
+
+.csv-exclude-row-btn:hover {
+  background: #f1f5f9;
+  border-color: #334155;
+}
+
+.csv-exclude-row-btn--all {
+  background: #334155;
+  color: #fff;
+  border-color: #334155;
+}
+
+.csv-exclude-row-btn--all:hover {
+  background: #1e293b;
+}
+
+.csv-exclude-row-btn--undo {
+  border-color: #2e7d32;
+  color: #166534;
+}
+
 .csv-preview-toolbar {
   display: flex;
   flex-wrap: wrap;

@@ -516,6 +516,7 @@
   color: #4a6b54;
 }
 
+.eval-hero__campus,
 .eval-hero__track {
   margin-top: 0.45rem;
   font-size: 0.82rem;
@@ -523,8 +524,36 @@
   line-height: 1.35;
 }
 
+.eval-hero__campus--none,
 .eval-hero__track--none {
   color: #5b7a63;
+}
+
+button.eval-hero__campus--editable {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.45rem 0 0;
+  padding: 0.15rem 0.35rem 0.15rem 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  border-radius: 6px;
+}
+
+button.eval-hero__campus--editable:hover,
+button.eval-hero__campus--editable:focus-visible {
+  color: #1f6b3a;
+  text-decoration: underline;
+  outline: none;
+}
+
+.eval-hero__campus-edit {
+  font-size: 0.7rem;
+  opacity: 0.65;
 }
 
 .eval-hero__aside {
@@ -2035,6 +2064,7 @@ button.eval-code-pill--elective-trigger {
 }
 
 .student-eval-section--cdoc .eval-hero__degree,
+.student-eval-section--cdoc .eval-hero__campus,
 .student-eval-section--cdoc .eval-hero__track {
   color: #2e4a36;
 }
@@ -2640,7 +2670,11 @@ button.eval-code-pill--elective-trigger {
 
 .student-eval-section--cdoc .eval-student-selector-grid {
   display: grid;
-  grid-template-columns: minmax(8.5rem, 0.45fr) minmax(10.5rem, 0.65fr) minmax(18rem, 1.4fr);
+  grid-template-columns:
+    minmax(8.5rem, 0.55fr)
+    minmax(8.5rem, 0.45fr)
+    minmax(10.5rem, 0.65fr)
+    minmax(16rem, 1.4fr);
   gap: 0.8rem;
   align-items: end;
 }
@@ -3172,7 +3206,7 @@ button.eval-code-pill--elective-trigger {
 
 @media (max-width: 1100px) {
   .student-eval-section--cdoc .eval-student-selector-grid {
-    grid-template-columns: minmax(8rem, 1fr) minmax(10rem, 1fr);
+    grid-template-columns: minmax(8rem, 1fr) minmax(8rem, 1fr) minmax(10rem, 1fr);
   }
 
   .student-eval-section--cdoc .eval-list-toolbar__field--student {

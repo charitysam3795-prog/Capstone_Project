@@ -15,13 +15,17 @@ use App\Models\StudentProfile;
 use App\Models\Subject;
 use App\Models\TblUser;
 use App\Models\YearLevel;
+use App\Services\AuditTrailService;
 use App\Services\GradeScaleHelper;
 use App\Services\ImportTabularFileReader;
 use App\Services\SisGradeDeliberationImportParser;
 use App\Services\StudentCurriculumEvaluationBuilder;
 use App\Services\StudentLoginProvisioner;
+use App\Services\ElectiveSlotFromImportAssigner;
 use App\Services\StudentTrackFromImportAssigner;
 use App\Services\SubjectImportResolver;
+use App\Support\CachedSchema;
+use App\Support\HeavyRequest;
 use App\Support\InputGuards;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -32,10 +36,11 @@ use Illuminate\Validation\Rule;
 
 class CsvImportController extends Controller
 {
-    /**
-     * Max data rows to validate and return in CSV preview (import also processes up to this cap).
-     */
-    private const CSV_PREVIEW_MAX_ROWS = 15000;
+    /** Commit SIS / grade imports in chunks so php artisan serve does not hold one giant transaction. */
+    private const IMPORT_COMMIT_CHUNK = 80;
+
+    /** @var array<string, true> student_id_number already upserted during the current import request */
+    private array $sisProfilesUpsertedThisRequest = [];
 
     /**
      * Available import types and their configurations
@@ -115,9 +120,16 @@ class CsvImportController extends Controller
             'label' => 'SIS Grade Deliberation export (tab or CSV — per subject grades)',
             'table' => 'tbl_evaluation',
             'required_columns' => ['student_id_number', 'subject_code', 'academic_year_id', 'semester_id'],
-            'optional_columns' => ['section_id', 'grade', 'evaluation_status', 'modality_id'],
+            'optional_columns' => ['section_id', 'grade', 'evaluation_status', 'modality_id', 'campus_id'],
             'validation_rules' => [],
             'column_groups' => [
+                [
+                    'title' => 'Campus from filename (not a file column)',
+                    'description' => 'Campus is inferred from the filename’s last letter using Lookup → Campus (first letter of the campus name: Puerto→P, Iligan→I, Butuan→B, …). Legacy: …M = Carmen (Main). Preview shows → Campus. The first campus assigned to a student is kept forever (summer files do not overwrite it).',
+                    'columns' => [
+                        ['name' => '→ Campus', 'accepted' => true],
+                    ],
+                ],
                 [
                     'title' => 'Grade Deliberation export (SESSION … REMARKS)',
                     'description' => 'Standard SIS Grade Deliberation file. Your file must include these columns; any other columns in the export are ignored.',
@@ -864,7 +876,7 @@ class CsvImportController extends Controller
         $query->delete();
     }
 
-    private function importGradesEvaluationRow(Request $request, array $row): void
+    private function importGradesEvaluationRow(Request $request, array $row, bool $syncCurriculum = true): void
     {
         $profile = StudentProfile::query()
             ->where('student_id_number', $row['student_id_number'])
@@ -920,10 +932,19 @@ class CsvImportController extends Controller
                 $payload['section_id'] = $sectionId;
             }
             $this->finalizeIncDeadlineForCsvEvaluation($payload, $row, $evaluation);
+            app(StudentTrackFromImportAssigner::class)->assignIfMissing($profile, $subject);
+            $profile->refresh();
+            $payload = app(ElectiveSlotFromImportAssigner::class)->applyToEvaluationPayload(
+                $profile,
+                $subject,
+                $payload,
+                $evaluation->elective_slot_id !== null ? (int) $evaluation->elective_slot_id : null
+            );
             $evaluation->fill($payload);
             $evaluation->save();
-            app(StudentTrackFromImportAssigner::class)->assignIfMissing($profile, $subject);
-            app(StudentCurriculumEvaluationBuilder::class)->syncStudentProfileFromCurriculumProgress($profile);
+            if ($syncCurriculum) {
+                app(StudentCurriculumEvaluationBuilder::class)->syncStudentProfileFromCurriculumProgress($profile);
+            }
 
             return;
         }
@@ -941,6 +962,15 @@ class CsvImportController extends Controller
         ];
         $this->finalizeIncDeadlineForCsvEvaluation($payload, $row, null);
 
+        app(StudentTrackFromImportAssigner::class)->assignIfMissing($profile, $subject);
+        $profile->refresh();
+        $payload = app(ElectiveSlotFromImportAssigner::class)->applyToEvaluationPayload(
+            $profile,
+            $subject,
+            $payload,
+            null
+        );
+
         Evaluation::create(array_merge([
             'student_id' => $profile->student_id,
             'subject_id' => $subject->subject_id,
@@ -950,8 +980,9 @@ class CsvImportController extends Controller
                 ? (int) $profile->current_program
                 : null,
         ], $payload));
-        app(StudentTrackFromImportAssigner::class)->assignIfMissing($profile, $subject);
-        app(StudentCurriculumEvaluationBuilder::class)->syncStudentProfileFromCurriculumProgress($profile);
+        if ($syncCurriculum) {
+            app(StudentCurriculumEvaluationBuilder::class)->syncStudentProfileFromCurriculumProgress($profile);
+        }
     }
 
     /**
@@ -1014,11 +1045,7 @@ class CsvImportController extends Controller
     public function preview(Request $request)
     {
         try {
-            set_time_limit(300);
-            if (function_exists('ini_set')) {
-                ini_set('max_execution_time', '300');
-                ini_set('memory_limit', '512M');
-            }
+            $this->raiseImportResourceLimits();
 
             if (! $request->user()?->canUseCsvImport()) {
                 return response()->json(['message' => 'Unauthorized'], 403);
@@ -1048,7 +1075,12 @@ class CsvImportController extends Controller
 
             if ($validated['import_type'] === 'sis_grade_deliberation') {
                 $parser = new SisGradeDeliberationImportParser;
-                $data = $parser->parseFileToGradeRows($file, $ayOverride, $semOverride);
+                $data = $parser->parseFileToGradeRows(
+                    $file,
+                    $ayOverride,
+                    $semOverride,
+                    $file->getClientOriginalName()
+                );
             } else {
                 $data = $this->parseCsv($file);
             }
@@ -1078,18 +1110,6 @@ class CsvImportController extends Controller
                 : $headers;
 
             $totalRows = count($data);
-            if ($totalRows > self::CSV_PREVIEW_MAX_ROWS) {
-                return response()->json([
-                    'error' => 'CSV has too many rows for preview/import',
-                    'message' => sprintf(
-                        'This file has %d rows. Maximum supported is %d. Split the file into smaller batches.',
-                        $totalRows,
-                        self::CSV_PREVIEW_MAX_ROWS
-                    ),
-                    'total_rows' => $totalRows,
-                    'max_rows' => self::CSV_PREVIEW_MAX_ROWS,
-                ], 422);
-            }
 
             $preview = [];
             $validationErrors = [];
@@ -1180,12 +1200,11 @@ class CsvImportController extends Controller
      */
     public function import(Request $request)
     {
+        $this->sisProfilesUpsertedThisRequest = [];
+        $auditSuppressed = false;
+
         try {
-            set_time_limit(300);
-            if (function_exists('ini_set')) {
-                ini_set('max_execution_time', '300');
-                ini_set('memory_limit', '512M');
-            }
+            $this->raiseImportResourceLimits();
 
             if (! $request->user()?->canUseCsvImport()) {
                 return response()->json(['message' => 'Unauthorized'], 403);
@@ -1197,6 +1216,7 @@ class CsvImportController extends Controller
                 'academic_year_id' => 'nullable|integer|exists:tbl_academic_year,academic_year_id',
                 'semester_id' => 'nullable|integer|exists:tbl_semester,semester_id',
                 'row_fixes' => 'nullable|string|max:200000',
+                'skip_rows' => 'nullable|string|max:200000',
             ]);
 
             if ($validated['import_type'] === 'sis_grade_deliberation' && ! $request->user()?->canImportSisData()) {
@@ -1213,10 +1233,16 @@ class CsvImportController extends Controller
 
             $importType = $this->importTypes[$validated['import_type']];
             $file = $request->file('csv_file');
+            $isSisGrades = $validated['import_type'] === 'sis_grade_deliberation';
 
-            if ($validated['import_type'] === 'sis_grade_deliberation') {
+            if ($isSisGrades) {
                 $parser = new SisGradeDeliberationImportParser;
-                $data = $parser->parseFileToGradeRows($file, $ayOverride, $semOverride);
+                $data = $parser->parseFileToGradeRows(
+                    $file,
+                    $ayOverride,
+                    $semOverride,
+                    $file->getClientOriginalName()
+                );
             } else {
                 $data = $this->parseCsv($file);
             }
@@ -1231,17 +1257,32 @@ class CsvImportController extends Controller
                 'total' => count($data),
                 'imported' => 0,
                 'failed' => 0,
+                'skipped' => 0,
                 'errors' => [],
             ];
 
-            DB::beginTransaction();
+            if ($isSisGrades || $validated['import_type'] === 'grades') {
+                AuditTrailService::suppress();
+                $auditSuppressed = true;
+            }
 
             /** @var array<string, bool> $pendingSisStudentIds */
             $pendingSisStudentIds = [];
+            /** @var array<string, true> $sidsToSync */
+            $sidsToSync = [];
             $rowFixes = $this->parseCsvImportRowFixes($validated['row_fixes'] ?? null);
+            $skipRows = $this->parseCsvImportSkipRows($validated['skip_rows'] ?? null);
+            $pendingInChunk = 0;
+
+            DB::beginTransaction();
 
             foreach ($data as $index => $row) {
                 $rowNumber = $index + 1;
+                if (isset($skipRows[$rowNumber])) {
+                    $results['skipped']++;
+
+                    continue;
+                }
                 $row = $this->normalizeCsvRow($row);
                 $row = $this->applyCsvImportRowFixes($row, $rowNumber, $rowFixes);
 
@@ -1253,14 +1294,13 @@ class CsvImportController extends Controller
                     default => $this->validationRulesForImportType($validated['import_type']),
                 };
 
-                // Validate row
                 $validation = $this->validateRow($row, $rowRules, $rowNumber);
-                if ($validated['import_type'] === 'sis_grade_deliberation'
+                if ($isSisGrades
                     && (($row['academic_year_id'] ?? null) === null || ($row['semester_id'] ?? null) === null)) {
                     $validation['valid'] = false;
                     $validation['errors'][] = 'Could not infer term from SESSION. Add academic_year_id and semester_id to the import request.';
                 }
-                if ($validated['import_type'] === 'sis_grade_deliberation') {
+                if ($isSisGrades) {
                     $metadataErrors = $this->gradeDeliberationStudentMetadataErrors($row);
                     if ($metadataErrors !== []) {
                         $validation['valid'] = false;
@@ -1283,31 +1323,35 @@ class CsvImportController extends Controller
 
                 try {
                     if ($validated['import_type'] === 'students') {
-                        DB::transaction(function () use ($row) {
-                            $this->importStudentAccountFromSisRow($row);
-                        });
+                        $this->importStudentAccountFromSisRow($row);
                     } elseif ($validated['import_type'] === 'grades') {
-                        DB::transaction(function () use ($request, $row) {
-                            $this->importGradesEvaluationRow($request, $this->stripSisImportMetadata($row));
-                        });
-                    } elseif ($validated['import_type'] === 'sis_grade_deliberation') {
-                        DB::transaction(function () use ($request, $row) {
-                            $this->importGradeDeliberationRow($request, $row);
-                        });
+                        $this->importGradesEvaluationRow($request, $this->stripSisImportMetadata($row), false);
+                        $sid = \App\Support\StudentIdNumber::canonicalize((string) ($row['student_id_number'] ?? ''));
+                        if ($sid !== '') {
+                            $sidsToSync[$sid] = true;
+                        }
+                    } elseif ($isSisGrades) {
+                        $this->importGradeDeliberationRow($request, $row, false);
+                        $sid = \App\Support\StudentIdNumber::canonicalize((string) ($row['student_id_number'] ?? ''));
+                        if ($sid !== '') {
+                            $sidsToSync[$sid] = true;
+                        }
                     } elseif ($validated['import_type'] === 'prerequisite_links') {
-                        DB::transaction(function () use ($row) {
-                            $this->importPrerequisiteLinkRow($row);
-                        });
+                        $this->importPrerequisiteLinkRow($row);
                     } elseif ($validated['import_type'] === 'sis_mixed') {
-                        DB::transaction(function () use ($request, $row) {
-                            $this->importSisMixedRow($request, $row);
-                        });
+                        $this->importSisMixedRow($request, $row);
                         $this->registerPendingSisMixedStudentId($row, $pendingSisStudentIds);
                     } else {
                         $insertData = $this->transformData($row, $validated['import_type']);
                         DB::table($importType['table'])->insert($insertData);
                     }
                     $results['imported']++;
+                    $pendingInChunk++;
+                    if ($pendingInChunk >= self::IMPORT_COMMIT_CHUNK) {
+                        DB::commit();
+                        DB::beginTransaction();
+                        $pendingInChunk = 0;
+                    }
                 } catch (\Throwable $e) {
                     $results['failed']++;
                     $results['errors'][] = [
@@ -1319,6 +1363,10 @@ class CsvImportController extends Controller
 
             if ($results['imported'] === 0) {
                 DB::rollBack();
+                if ($auditSuppressed) {
+                    AuditTrailService::resume();
+                    $auditSuppressed = false;
+                }
 
                 return response()->json([
                     'error' => 'No records were imported',
@@ -1328,6 +1376,8 @@ class CsvImportController extends Controller
 
             DB::commit();
 
+            $this->syncImportedStudentCurriculum(array_keys($sidsToSync));
+
             Log::info("CSV Import: {$results['imported']} {$validated['import_type']} imported by user {$request->user()->user_id}");
 
             return response()->json([
@@ -1335,13 +1385,19 @@ class CsvImportController extends Controller
                 'results' => $results,
             ]);
         } catch (\Exception $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
             Log::error('CSV Import Error: '.$e->getMessage());
 
             return response()->json([
                 'error' => 'Import failed',
                 'message' => $e->getMessage(),
             ], 500);
+        } finally {
+            if ($auditSuppressed) {
+                AuditTrailService::resume();
+            }
         }
     }
 
@@ -1668,6 +1724,10 @@ class CsvImportController extends Controller
             $row['_sis_course'],
             $row['_sis_year_level_text'],
             $row['_sis_year_sem_code'],
+            $row['_sis_admission_type'],
+            $row['_sis_campus_name'],
+            $row['_sis_campus_code'],
+            $row['_sis_source_filename'],
             $row['_sis_source_row']
         );
 
@@ -1715,8 +1775,8 @@ class CsvImportController extends Controller
             ));
         }
 
-        // Show how SESSION maps into Lookup Academic Year / Semester.
-        foreach (['→ Academic Year (DB)', '→ Semester (DB)'] as $extra) {
+        // Show how SESSION maps into Lookup Academic Year / Semester, and campus from filename.
+        foreach (['→ Campus', '→ Academic Year (DB)', '→ Semester (DB)'] as $extra) {
             if (! in_array($extra, $headers, true)) {
                 $headers[] = $extra;
             }
@@ -1749,6 +1809,19 @@ class CsvImportController extends Controller
                 ->value('semester_name');
         }
 
+        $campusName = trim((string) ($row['_sis_campus_name'] ?? ''));
+        $campusCode = trim((string) ($row['_sis_campus_code'] ?? ''));
+        $campusId = $row['campus_id'] ?? null;
+        if ($campusName !== '') {
+            $data['→ Campus'] = $campusCode !== ''
+                ? sprintf('%s (%s)', $campusName, $campusCode)
+                : $campusName;
+        } elseif ($campusId !== null && $campusId !== '') {
+            $data['→ Campus'] = sprintf('Campus id %s', $campusId);
+        } else {
+            $data['→ Campus'] = '— not inferred from filename (use …M / …P / …I) —';
+        }
+
         $data['→ Academic Year (DB)'] = $ayName
             ? sprintf('%s (id %s)', $ayName, $ayId)
             : '— not matched —';
@@ -1762,10 +1835,10 @@ class CsvImportController extends Controller
     /**
      * @param  array<string, mixed>  $row
      */
-    private function importGradeDeliberationRow(Request $request, array $row): void
+    private function importGradeDeliberationRow(Request $request, array $row, bool $syncCurriculum = true): void
     {
         $this->upsertStudentFromGradeDeliberationRow($row);
-        $this->importGradesEvaluationRow($request, $this->stripSisImportMetadata($row));
+        $this->importGradesEvaluationRow($request, $this->stripSisImportMetadata($row), $syncCurriculum);
     }
 
     /**
@@ -1775,6 +1848,9 @@ class CsvImportController extends Controller
     {
         $sid = trim((string) ($row['student_id_number'] ?? ''));
         if ($sid === '') {
+            return;
+        }
+        if (isset($this->sisProfilesUpsertedThisRequest[$sid])) {
             return;
         }
 
@@ -1819,14 +1895,30 @@ class CsvImportController extends Controller
             if ($entryType !== null) {
                 $updates['student_entry_type'] = $entryType;
             }
+            // Home campus is sticky: first assignment wins. Summer (often at main/Carmen)
+            // must not overwrite Puerto / Iligan / etc. when re-importing.
+            $campusId = isset($row['campus_id']) && $row['campus_id'] !== '' && $row['campus_id'] !== null
+                ? (int) $row['campus_id']
+                : null;
+            $existingCampusId = $profile->campus_id !== null && $profile->campus_id !== ''
+                ? (int) $profile->campus_id
+                : null;
+            if (
+                $campusId
+                && $existingCampusId === null
+                && CachedSchema::hasColumn('tbl_student_profile', 'campus_id')
+            ) {
+                $updates['campus_id'] = $campusId;
+            }
             $profile->fill($updates);
             $profile->save();
             StudentLoginProvisioner::ensureForProfile($profile->fresh());
+            $this->sisProfilesUpsertedThisRequest[$sid] = true;
 
             return;
         }
 
-        $profile = StudentProfile::create([
+        $create = [
             'user_id' => null,
             'student_number' => $sid,
             'student_id_number' => $sid,
@@ -1839,8 +1931,19 @@ class CsvImportController extends Controller
             'year_level_id' => $yearLevelId,
             'semester_id' => $semesterId,
             'academic_year_id' => $academicYearId,
-        ]);
+        ];
+        $campusId = isset($row['campus_id']) && $row['campus_id'] !== '' && $row['campus_id'] !== null
+            ? (int) $row['campus_id']
+            : null;
+        if (
+            $campusId
+            && CachedSchema::hasColumn('tbl_student_profile', 'campus_id')
+        ) {
+            $create['campus_id'] = $campusId;
+        }
+        $profile = StudentProfile::create($create);
         StudentLoginProvisioner::ensureForProfile($profile);
+        $this->sisProfilesUpsertedThisRequest[$sid] = true;
     }
 
     /**
@@ -2012,6 +2115,46 @@ class CsvImportController extends Controller
         return $out;
     }
 
+    private function raiseImportResourceLimits(): void
+    {
+        HeavyRequest::forImport();
+    }
+
+    /**
+     * Rebuild Regular/Irregular standing once per student after a bulk grade import.
+     *
+     * @param  list<string>  $studentIdNumbers
+     */
+    private function syncImportedStudentCurriculum(array $studentIdNumbers): void
+    {
+        $ids = array_values(array_filter(array_unique($studentIdNumbers)));
+        if ($ids === []) {
+            return;
+        }
+
+        $builder = app(StudentCurriculumEvaluationBuilder::class);
+        foreach (array_chunk($ids, HeavyRequest::STUDENT_CHUNK) as $chunk) {
+            $profiles = StudentProfile::query()
+                ->whereIn('student_id_number', $chunk)
+                ->orderBy('student_id')
+                ->get();
+            $seen = [];
+            foreach ($profiles as $profile) {
+                $sid = (string) $profile->student_id_number;
+                if (isset($seen[$sid])) {
+                    continue;
+                }
+                $seen[$sid] = true;
+                try {
+                    $builder->syncStudentProfileFromCurriculumProgress($profile);
+                } catch (\Throwable $e) {
+                    report($e);
+                }
+            }
+            unset($profiles, $seen);
+        }
+    }
+
     /**
      * Accept CSV / TSV / TXT / Excel / ODS uploads (mime types vary by browser/OS).
      *
@@ -2024,7 +2167,7 @@ class CsvImportController extends Controller
         return [
             'required',
             'file',
-            'max:20480',
+            'max:102400',
             function (string $attribute, mixed $value, \Closure $fail) use ($allowed): void {
                 if (! $value instanceof \Illuminate\Http\UploadedFile) {
                     $fail('A data file is required.');
@@ -2059,6 +2202,31 @@ class CsvImportController extends Controller
         $decoded = json_decode($json, true);
 
         return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * @return array<int, true>
+     */
+    private function parseCsvImportSkipRows(?string $json): array
+    {
+        if ($json === null || trim($json) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($json, true);
+        if (! is_array($decoded)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($decoded as $n) {
+            $row = (int) $n;
+            if ($row > 0) {
+                $out[$row] = true;
+            }
+        }
+
+        return $out;
     }
 
     /**

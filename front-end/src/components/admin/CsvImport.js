@@ -57,7 +57,10 @@ function orderPreviewHeaders(importTypeKey, headers) {
 }
 
 const PREVIEW_PAGE_SIZE = 50;
-const SIS_INTERNAL_COLUMN_GROUP_TITLES = new Set(['Mapped system fields']);
+const SIS_INTERNAL_COLUMN_GROUP_TITLES = new Set([
+  'Mapped system fields',
+  'Campus from filename (not a file column)',
+]);
 
 function rowSearchText(row) {
   const data = row?.data && typeof row.data === 'object' ? row.data : {};
@@ -345,6 +348,7 @@ const CsvImport = ({
   const [previewSearch, setPreviewSearch] = useState('');
   const [previewPage, setPreviewPage] = useState(1);
   const [rowFixes, setRowFixes] = useState({});
+  const [excludedRowNumbers, setExcludedRowNumbers] = useState(() => new Set());
   const [subjects, setSubjects] = useState([]);
   const [fixModalRow, setFixModalRow] = useState(null);
   const fixModalRef = useRef(null);
@@ -483,12 +487,13 @@ const CsvImport = ({
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        timeout: 300000,
+        timeout: 0,
         showLoading: true,
       });
 
       setPreview(response.data);
       setRowFixes({});
+      setExcludedRowNumbers(new Set());
       setFixModalRow(null);
       setPreviewFilter('all');
       setPreviewOutcomeFilter('all');
@@ -512,9 +517,13 @@ const CsvImport = ({
       return;
     }
 
+    const skipCount = excludedRowNumbers.size;
+    const importCount = previewStats.validCount;
     const confirmed = await swalConfirm(
       'Confirm Import',
-      `Are you sure you want to import ${preview?.total_rows || 'these'} records?`,
+      skipCount > 0
+        ? `Import ${importCount} ready row${importCount === 1 ? '' : 's'} and skip ${skipCount} excluded cannot-import row${skipCount === 1 ? '' : 's'}?`
+        : `Are you sure you want to import ${preview?.total_rows || importCount} records?`,
       'Import',
       'Cancel'
     );
@@ -536,20 +545,24 @@ const CsvImport = ({
       if (Object.keys(rowFixes).length > 0) {
         formData.append('row_fixes', JSON.stringify(rowFixes));
       }
+      if (excludedRowNumbers.size > 0) {
+        formData.append('skip_rows', JSON.stringify([...excludedRowNumbers]));
+      }
 
       const response = await api.post('/csv-import/import', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        timeout: 300000,
+        timeout: 0,
         showLoading: true,
       });
 
       const results = response.data.results || {};
       const imported = results.imported ?? 0;
       const failed = results.failed ?? 0;
+      const skipped = results.skipped ?? excludedRowNumbers.size;
       const total = results.total ?? preview?.total_rows ?? 0;
-      const summary = `Imported ${imported} of ${total} records.${failed ? ` ${failed} row(s) failed.` : ''}`;
+      const summary = `Imported ${imported} of ${total} records.${skipped ? ` ${skipped} row(s) skipped.` : ''}${failed ? ` ${failed} row(s) failed.` : ''}`;
       setSuccess(summary);
       await swalSuccess('Import finished', summary);
 
@@ -606,7 +619,13 @@ const CsvImport = ({
     let validCount = 0;
     let fixedCount = 0;
     let fixableCount = 0;
+    let excludedCount = 0;
     rows.forEach((r) => {
+      const excluded = excludedRowNumbers.has(r.row_number);
+      if (excluded) {
+        excludedCount += 1;
+        return;
+      }
       if (r.row_fix?.can_fix || getRowFixMeta(r)?.can_fix) fixableCount += 1;
       if (isRowEffectivelyValid(r, rowFixes, subjectCodeSet)) {
         validCount += 1;
@@ -628,11 +647,12 @@ const CsvImport = ({
       validCount,
       fixedCount,
       fixableCount,
-      readyToImport: errorCount === 0 && rows.length > 0,
+      excludedCount,
+      readyToImport: errorCount === 0 && validCount > 0,
       failedRowCount,
       studentsWithFailCount: studentIdsWithFail.size,
     };
-  }, [preview, rowFixes, subjectCodeSet]);
+  }, [preview, rowFixes, subjectCodeSet, excludedRowNumbers]);
 
   const filteredPreviewRows = useMemo(() => {
     const rows = Array.isArray(preview?.preview) ? preview.preview : [];
@@ -649,9 +669,11 @@ const CsvImport = ({
     }
 
     return rows.filter((row) => {
+      const excluded = excludedRowNumbers.has(row.row_number);
       const effectivelyValid = isRowEffectivelyValid(row, rowFixes, subjectCodeSet);
-      if (previewFilter === 'errors' && effectivelyValid) return false;
-      if (previewFilter === 'valid' && !effectivelyValid) return false;
+      if (previewFilter === 'excluded') return excluded;
+      if (previewFilter === 'errors' && (effectivelyValid || excluded)) return false;
+      if (previewFilter === 'valid' && (!effectivelyValid || excluded)) return false;
 
       if (previewOutcomeFilter === 'failed' && !previewRowIsFailed(row)) return false;
       if (previewOutcomeFilter === 'passed' && !previewRowIsPassed(row)) return false;
@@ -663,7 +685,7 @@ const CsvImport = ({
       if (q && !rowSearchText(row).includes(q)) return false;
       return true;
     });
-  }, [preview, previewFilter, previewOutcomeFilter, previewSearch, rowFixes, subjectCodeSet]);
+  }, [preview, previewFilter, previewOutcomeFilter, previewSearch, rowFixes, subjectCodeSet, excludedRowNumbers]);
 
   const openRowFixModal = (row) => {
     const existing = rowFixes[row.row_number] || {};
@@ -680,6 +702,43 @@ const CsvImport = ({
     setFixModalRow(null);
     setFixFormValues({});
     setFixApplyToAll(true);
+  };
+
+  const excludePreviewRow = (rowNumber) => {
+    setExcludedRowNumbers((prev) => {
+      const next = new Set(prev);
+      next.add(rowNumber);
+      return next;
+    });
+  };
+
+  const includePreviewRow = (rowNumber) => {
+    setExcludedRowNumbers((prev) => {
+      const next = new Set(prev);
+      next.delete(rowNumber);
+      return next;
+    });
+  };
+
+  const excludeAllCannotImportRows = () => {
+    const rows = Array.isArray(preview?.preview) ? preview.preview : [];
+    setExcludedRowNumbers((prev) => {
+      const next = new Set(prev);
+      rows.forEach((row) => {
+        if (!isRowEffectivelyValid(row, rowFixes, subjectCodeSet)) {
+          next.add(row.row_number);
+        }
+      });
+      return next;
+    });
+    setPreviewFilter('excluded');
+    setPreviewPage(1);
+  };
+
+  const undoAllExcludedRows = () => {
+    setExcludedRowNumbers(new Set());
+    setPreviewFilter('errors');
+    setPreviewPage(1);
   };
   useDialogFocus(Boolean(fixModalRow), fixModalRef, null, closeRowFixModal);
 
@@ -723,6 +782,7 @@ const CsvImport = ({
     const rows = Array.isArray(preview?.preview) ? preview.preview : [];
     const groups = new Map();
     rows.forEach((row) => {
+      if (excludedRowNumbers.has(row.row_number)) return;
       if (!rowCanFix(row, rowFixes, subjectCodeSet)) return;
       const keys = rowBulkKeys(row);
       if (keys.subject_code) {
@@ -763,7 +823,7 @@ const CsvImport = ({
       }
     });
     return Array.from(groups.values()).sort((a, b) => b.count - a.count);
-  }, [preview, rowFixes, subjectCodeSet]);
+  }, [preview, rowFixes, subjectCodeSet, excludedRowNumbers]);
 
   const previewPageCount = Math.max(1, Math.ceil(filteredPreviewRows.length / PREVIEW_PAGE_SIZE));
   const safePreviewPage = Math.min(previewPage, previewPageCount);
@@ -1011,25 +1071,47 @@ const CsvImport = ({
                   {' '}
                   Some rows have values that do not match the system (subject code, term, program,
                   year level, name, etc.). Open <strong>Cannot import</strong> and use{' '}
-                  <strong>Fix row</strong> to correct each problem row.
+                  <strong>Fix row</strong> to correct, or <strong>Exclude</strong> to skip them.
                 </>
               ) : (
-                <> Use the <strong>Cannot import</strong> filter to review them.</>
+                <> Use the <strong>Cannot import</strong> filter, then <strong>Exclude</strong> rows you want to skip.</>
               )}
-              {Array.isArray(preview.error_row_numbers) && preview.error_row_numbers.length > 0 ? (
-                <>
-                  {' '}
-                  Problem rows:{' '}
-                  <strong>
-                    {preview.error_row_numbers.slice(0, 12).join(', ')}
-                    {preview.error_row_numbers.length > 12
-                      ? ` … +${preview.error_row_numbers.length - 12} more`
-                      : ''}
-                  </strong>
-                </>
-              ) : null}
+              <div className="csv-exclude-all-wrap">
+                <button
+                  type="button"
+                  className="csv-exclude-row-btn csv-exclude-row-btn--all"
+                  onClick={excludeAllCannotImportRows}
+                >
+                  Exclude all cannot-import rows ({previewStats.errorCount})
+                </button>
+                {previewStats.excludedCount > 0 ? (
+                  <button
+                    type="button"
+                    className="csv-exclude-row-btn csv-exclude-row-btn--undo"
+                    onClick={undoAllExcludedRows}
+                  >
+                    Undo all excludes ({previewStats.excludedCount})
+                  </button>
+                ) : null}
+              </div>
             </div>
           )}
+
+          {previewStats.errorCount === 0 && previewStats.excludedCount > 0 ? (
+            <div className="csv-preview-warning csv-preview-warning--info">
+              {previewStats.excludedCount} cannot-import row
+              {previewStats.excludedCount === 1 ? '' : 's'} excluded and will be skipped.
+              <div className="csv-exclude-all-wrap">
+                <button
+                  type="button"
+                  className="csv-exclude-row-btn csv-exclude-row-btn--undo"
+                  onClick={undoAllExcludedRows}
+                >
+                  Undo all excludes ({previewStats.excludedCount})
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {previewStats.fixedCount > 0 ? (
             <div className="csv-preview-warning csv-preview-warning--info">
@@ -1071,6 +1153,18 @@ const CsvImport = ({
               >
                 Ready ({previewStats.validCount})
               </button>
+              {previewStats.excludedCount > 0 ? (
+                <button
+                  type="button"
+                  className={`csv-preview-filter csv-preview-filter--excluded${previewFilter === 'excluded' ? ' is-active' : ''}`}
+                  onClick={() => {
+                    setPreviewFilter('excluded');
+                    setPreviewPage(1);
+                  }}
+                >
+                  Excluded ({previewStats.excludedCount})
+                </button>
+              ) : null}
             </div>
             <div className="csv-preview-toolbar-side">
               <label className="csv-preview-outcome">
@@ -1133,16 +1227,22 @@ const CsvImport = ({
                   </tr>
                 ) : (
                   pagedPreviewRows.map((row) => {
+                    const excluded = excludedRowNumbers.has(row.row_number);
                     const effectivelyValid = isRowEffectivelyValid(row, rowFixes, subjectCodeSet);
-                    const canFix = rowCanFix(row, rowFixes, subjectCodeSet);
+                    const canFix = !excluded && rowCanFix(row, rowFixes, subjectCodeSet);
                     return (
-                    <tr key={row.row_number} className={effectivelyValid ? 'valid' : 'invalid'}>
+                    <tr
+                      key={row.row_number}
+                      className={excluded ? 'excluded' : effectivelyValid ? 'valid' : 'invalid'}
+                    >
                       <td>{row.row_number}</td>
                       {previewHeadersOrdered.map((header) => (
                         <td key={header}>{row.data[header] || '-'}</td>
                       ))}
                       <td className="csv-preview-sticky-col">
-                        {effectivelyValid ? (
+                        {excluded ? (
+                          <span className="status-badge excluded">Excluded</span>
+                        ) : effectivelyValid ? (
                           <span className="status-badge valid">
                             {rowFixes[row.row_number] && !row.valid ? 'Fixed' : 'Ready'}
                           </span>
@@ -1160,8 +1260,27 @@ const CsvImport = ({
                             Fix row
                           </button>
                         ) : null}
+                        {excluded ? (
+                          <button
+                            type="button"
+                            className="csv-exclude-row-btn csv-exclude-row-btn--undo"
+                            onClick={() => includePreviewRow(row.row_number)}
+                          >
+                            Undo exclude
+                          </button>
+                        ) : !effectivelyValid ? (
+                          <button
+                            type="button"
+                            className="csv-exclude-row-btn"
+                            onClick={() => excludePreviewRow(row.row_number)}
+                          >
+                            Exclude
+                          </button>
+                        ) : null}
                         <div className="csv-preview-issue-text">
-                          {rowEffectiveIssue(row, rowFixes, subjectCodeSet)}
+                          {excluded
+                            ? 'This row will be skipped on import.'
+                            : rowEffectiveIssue(row, rowFixes, subjectCodeSet)}
                         </div>
                       </td>
                     </tr>
@@ -1209,9 +1328,15 @@ const CsvImport = ({
           </div>
 
           {!previewStats.readyToImport ? (
-            previewStats.fixedCount > 0 ? (
+            previewStats.validCount > 0 ? (
               <p className="csv-import-hint">
-                Fix or map the remaining {previewStats.errorCount} row
+                {previewStats.errorCount} cannot-import row
+                {previewStats.errorCount === 1 ? '' : 's'} still block import. Fix them, or use{' '}
+                <strong>Exclude</strong> / <strong>Exclude all cannot-import rows</strong> to skip them.
+              </p>
+            ) : previewStats.fixedCount > 0 ? (
+              <p className="csv-import-hint">
+                Fix or exclude the remaining {previewStats.errorCount} row
                 {previewStats.errorCount === 1 ? '' : 's'} before importing.
               </p>
             ) : null
@@ -1225,10 +1350,12 @@ const CsvImport = ({
               >
                 {importing
                   ? 'Importing...'
-                  : `Import ${preview.total_rows} Records${
-                      previewStats.fixedCount > 0
-                        ? ` (${previewStats.fixedCount} with row fixes)`
-                        : ''
+                  : `Import ${previewStats.validCount} record${previewStats.validCount === 1 ? '' : 's'}${
+                      previewStats.excludedCount > 0
+                        ? ` (skip ${previewStats.excludedCount} excluded)`
+                        : previewStats.fixedCount > 0
+                          ? ` (${previewStats.fixedCount} with row fixes)`
+                          : ''
                     }`}
               </button>
             </div>

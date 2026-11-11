@@ -34,6 +34,7 @@ class StudentProfile extends Model
         'year_level_id',
         'semester_id',
         'academic_year_id',
+        'campus_id',
         'track_id',
         'promoted_next_sem_at',
         'promoted_next_sem_by',
@@ -151,6 +152,11 @@ class StudentProfile extends Model
     public function academicYear()
     {
         return $this->belongsTo(AcademicYear::class, 'academic_year_id', 'academic_year_id');
+    }
+
+    public function campus()
+    {
+        return $this->belongsTo(Campus::class, 'campus_id', 'campus_id');
     }
 
     public function track()

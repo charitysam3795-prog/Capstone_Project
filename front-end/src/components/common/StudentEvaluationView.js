@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
-import { swalToast, swalError, swalConfirm, swalInfo } from '../../utils/swal';
+import { swalToast, swalError, swalConfirm, swalInfo, swalSelect } from '../../utils/swal';
 import { downloadBwHtmlAsPdf } from '../../utils/evaluationBwPdf';
 import { useSystemGuide } from './SystemGuide';
 import PromoteSemesterModal from './PromoteSemesterModal';
@@ -208,6 +208,7 @@ function buildStaffEvaluationReportHtml({
   studentNumber,
   programLabel,
   trackLabel,
+  campusLabel,
   academicStatus,
   studentEntryType,
   selectedLabel,
@@ -409,6 +410,7 @@ function buildStaffEvaluationReportHtml({
             <div><span>Student Name</span><strong>${htmlEscape(studentName)}</strong></div>
             <div><span>Student ID Number</span><strong>${htmlEscape(studentNumber)}</strong></div>
             <div><span>Program</span><strong>${htmlEscape(programLabel)}</strong></div>
+            <div><span>Campus</span><strong>${htmlEscape(campusLabel || 'Not assigned')}</strong></div>
             <div><span>Track</span><strong>${htmlEscape(trackLabel)}</strong></div>
             <div><span>Academic Status</span><strong>${htmlEscape(academicStatus)}</strong></div>
             ${studentEntryType ? `<div><span>Student Type</span><strong>${htmlEscape(studentEntryType)}</strong></div>` : ''}
@@ -1443,6 +1445,8 @@ function readLastEvaluationSelection(cacheKey) {
     return {
       student_id: parsed.student_id ?? null,
       student_id_number: studentIdNumber,
+      listCampusFilter:
+        parsed.listCampusFilter != null ? String(parsed.listCampusFilter) : '',
       listYearLevelFilter:
         parsed.listYearLevelFilter != null ? String(parsed.listYearLevelFilter) : '',
       listStandingFilter:
@@ -1461,6 +1465,7 @@ function writeLastEvaluationSelection(cacheKey, payload) {
       JSON.stringify({
         student_id: payload.student_id ?? null,
         student_id_number: String(payload.student_id_number),
+        listCampusFilter: payload.listCampusFilter ?? '',
         listYearLevelFilter: payload.listYearLevelFilter ?? '',
         listStandingFilter: payload.listStandingFilter ?? '',
         savedAt: new Date().toISOString(),
@@ -1646,12 +1651,18 @@ const StudentEvaluationView = ({
     clearEvaluationDraftCache(evaluationDraftStorageKey);
   }, [evaluationDraftStorageKey]);
 
+  const [listCampusFilter, setListCampusFilter] = useState('');
   const [listYearLevelFilter, setListYearLevelFilter] = useState('');
   /** '' | regular | irregular | unevaluated | unevaluated_irregular */
   const [listStandingFilter, setListStandingFilter] = useState('');
+  /** Full Lookup year-level list so Year level filter always includes 3rd Year etc. */
+  const [lookupYearLevels, setLookupYearLevels] = useState([]);
+  const [lookupCampuses, setLookupCampuses] = useState([]);
   const [evalFilterCurriculumId, setEvalFilterCurriculumId] = useState('');
   const [evalFilterYearId, setEvalFilterYearId] = useState('');
   const [evalFilterSemesterId, setEvalFilterSemesterId] = useState('');
+  /** When true, Year/Semester filters are user-browsed and must not snap back to standing. */
+  const [evalFilterBrowseUnlocked, setEvalFilterBrowseUnlocked] = useState(false);
   const [standingSaving, setStandingSaving] = useState(false);
   const [simulationCreating, setSimulationCreating] = useState(false);
   /** Extra years beyond curriculum map (5th, 6th, …) — length depends on the student. */
@@ -2112,10 +2123,20 @@ const StudentEvaluationView = ({
         const trimmed = String(search || '').trim();
         const params = {
           search: trimmed || undefined,
-          limit: trimmed ? 200 : 2000,
+          // No limit — Year/Standing filters are applied server-side so the
+          // dropdown is not truncated to the first N names alphabetically.
         };
         if (resolvedListScope !== 'all') {
           params.academic_record = resolvedListScope;
+        }
+        if (listCampusFilter) {
+          params.campus_id = listCampusFilter;
+        }
+        if (listYearLevelFilter) {
+          params.year_level_id = listYearLevelFilter;
+        }
+        if (listStandingFilter) {
+          params.standing = listStandingFilter;
         }
         const response = await api.get('/evaluation/students', {
           params,
@@ -2124,6 +2145,20 @@ const StudentEvaluationView = ({
         });
         const list = response.data.students || [];
         setStudents(list);
+        const campusRows = Array.isArray(response.data.campuses) ? response.data.campuses : [];
+        if (campusRows.length) {
+          const opts = campusRows
+            .map((c) => ({
+              id: String(c.campus_id ?? c.id ?? ''),
+              name: String(c.campus_name || c.name || '').trim(),
+              status: String(c.status || 'active').toLowerCase(),
+            }))
+            .filter((c) => c.id && c.name && c.status !== 'inactive')
+            .sort((a, b) => a.name.localeCompare(b.name));
+          if (opts.length) {
+            setLookupCampuses(opts);
+          }
+        }
         setSelectedStudent((prev) => {
           if (!prev) return prev;
           const found = list.find((s) => s.student_id === prev.student_id);
@@ -2141,7 +2176,7 @@ const StudentEvaluationView = ({
         }
       }
     },
-    [resolvedListScope]
+    [resolvedListScope, listCampusFilter, listYearLevelFilter, listStandingFilter]
   );
 
   /** After grades are saved, ensure one academic-record completion exists so the student appears under Evaluated students (no separate "Store" step). */
@@ -2191,6 +2226,54 @@ const StudentEvaluationView = ({
     loadPrograms();
   }, []);
 
+  useEffect(() => {
+    const loadYearLevels = async () => {
+      try {
+        const response = await api.get('/lookup/year-levels', { skipLoading: true });
+        const rows = Array.isArray(response.data)
+          ? response.data
+          : response.data?.data || response.data || [];
+        const opts = (Array.isArray(rows) ? rows : [])
+          .map((y) => ({
+            id: String(y.year_level_id ?? y.id ?? ''),
+            name: String(y.year_level || y.year_level_name || y.name || '').trim(),
+            status: String(y.status || 'active').toLowerCase(),
+          }))
+          .filter((y) => y.id && y.name && y.status !== 'inactive')
+          .sort((a, b) => Number(a.id) - Number(b.id));
+        setLookupYearLevels(opts);
+      } catch (err) {
+        console.warn('Could not fetch year levels:', err);
+        setLookupYearLevels([]);
+      }
+    };
+    loadYearLevels();
+  }, []);
+
+  useEffect(() => {
+    const loadCampuses = async () => {
+      try {
+        const response = await api.get('/lookup/campus', { skipLoading: true });
+        const rows = Array.isArray(response.data)
+          ? response.data
+          : response.data?.data || response.data || [];
+        const opts = (Array.isArray(rows) ? rows : [])
+          .map((c) => ({
+            id: String(c.campus_id ?? c.id ?? ''),
+            name: String(c.campus_name || c.name || '').trim(),
+            status: String(c.status || 'active').toLowerCase(),
+          }))
+          .filter((c) => c.id && c.name && c.status !== 'inactive')
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setLookupCampuses(opts);
+      } catch (err) {
+        console.warn('Could not fetch campuses:', err);
+        setLookupCampuses([]);
+      }
+    };
+    loadCampuses();
+  }, []);
+
   const persistStudentStanding = useCallback(
     async ({ yearId, semesterId, toastOnSuccess = false }) => {
       const studentId = data?.student?.student_id;
@@ -2223,6 +2306,23 @@ const StudentEvaluationView = ({
                 }
               : prev
           );
+          if (nextStudent) {
+            setStudents((prev) =>
+              prev.map((s) =>
+                Number(s.student_id) === Number(studentId)
+                  ? {
+                      ...s,
+                      year_level_id: nextStudent.year_level_id ?? s.year_level_id,
+                      year_level_name:
+                        nextStudent.year_level_name ||
+                        nextStudent.yearLevel?.year_level ||
+                        s.year_level_name,
+                      semester_id: nextStudent.semester_id ?? s.semester_id,
+                    }
+                  : s
+              )
+            );
+          }
         }
         // Standing changed — clear local load/placement caches for the old term.
         setStandingLoadDeferred(new Set());
@@ -2246,6 +2346,111 @@ const StudentEvaluationView = ({
     },
     [canEditEvaluationRows, data?.student?.student_id]
   );
+
+  const canAssignCampus = !!(
+    (isAdmin || isDean || isProgramHead) &&
+    canEditEvaluationRows &&
+    !isEvaluatedModule
+  );
+
+  const openCampusAssignModal = useCallback(async () => {
+    if (!canAssignCampus || !data?.student?.student_id) return;
+    const options = {};
+    (lookupCampuses || []).forEach((c) => {
+      if (c?.id) options[String(c.id)] = c.name;
+    });
+    if (Object.keys(options).length === 0) {
+      await swalInfo(
+        'No campuses available',
+        'Add campuses under Admin → Lookup Data → Campus first (e.g. Carmen, Puerto, Iligan, Butuan).'
+      );
+      return;
+    }
+    options.__clear__ = '— Clear campus —';
+
+    const currentId =
+      data?.student?.campus_id != null && data.student.campus_id !== ''
+        ? String(data.student.campus_id)
+        : data?.student?.campus?.campus_id != null
+          ? String(data.student.campus.campus_id)
+          : '';
+    const currentName = data?.student?.campus?.campus_name || 'not set';
+
+    const picked = await swalSelect({
+      title: currentId ? 'Change campus?' : 'Assign campus?',
+      text: `Current: ${currentName}. Choose from the Admin campus list.`,
+      inputOptions: options,
+      inputValue: currentId && options[currentId] ? currentId : Object.keys(options)[0],
+      confirmButtonText: currentId ? 'Change campus' : 'Assign campus',
+    });
+    if (picked == null) return;
+
+    const nextCampusId = picked === '__clear__' ? null : Number(picked);
+    if (
+      nextCampusId != null &&
+      currentId &&
+      String(nextCampusId) === String(currentId)
+    ) {
+      return;
+    }
+    if (nextCampusId == null && !currentId) return;
+
+    const nextLabel =
+      nextCampusId == null
+        ? 'cleared (unassigned)'
+        : options[String(nextCampusId)] || `Campus #${nextCampusId}`;
+    const ok = await swalConfirm(
+      currentId ? 'Confirm campus change' : 'Confirm campus assignment',
+      `Set campus from "${currentName}" to "${nextLabel}"?`,
+      'Confirm',
+      'Cancel'
+    );
+    if (!ok) return;
+
+    try {
+      const response = await api.post('/evaluation/student/campus', {
+        student_id: Number(data.student.student_id),
+        campus_id: nextCampusId,
+      });
+      const nextStudent = response.data?.student;
+      if (nextStudent) {
+        setData((prev) => (prev ? { ...prev, student: { ...prev.student, ...nextStudent } } : prev));
+        setBaselineData((prev) =>
+          prev ? { ...prev, student: { ...prev.student, ...nextStudent } } : prev
+        );
+        setSelectedStudent((prev) =>
+          prev
+            ? {
+                ...prev,
+                campus_id: nextStudent.campus_id ?? null,
+                campus: nextStudent.campus || null,
+              }
+            : prev
+        );
+        setStudents((prev) =>
+          prev.map((s) =>
+            Number(s.student_id) === Number(data.student.student_id)
+              ? {
+                  ...s,
+                  campus_id: nextStudent.campus_id ?? null,
+                  campus: nextStudent.campus || null,
+                }
+              : s
+          )
+        );
+      }
+      swalToast('success', response.data?.message || 'Campus updated.');
+    } catch (err) {
+      await swalError(
+        'Could not update campus',
+        err.response?.data?.message || 'Request failed'
+      );
+    }
+  }, [
+    canAssignCampus,
+    data?.student,
+    lookupCampuses,
+  ]);
 
   const curriculumMaxYearId = useMemo(() => {
     let max = 0;
@@ -2599,6 +2804,21 @@ const StudentEvaluationView = ({
 
   const yearLevelOptions = useMemo(() => {
     const m = new Map();
+    // Always seed from Lookup so 3rd Year is never missing just because no
+    // student row currently has year_level_id = 3 (stale after imports).
+    (lookupYearLevels.length
+      ? lookupYearLevels
+      : [
+          { id: '1', name: '1st Year' },
+          { id: '2', name: '2nd Year' },
+          { id: '3', name: '3rd Year' },
+          { id: '4', name: '4th Year' },
+        ]
+    ).forEach((y) => {
+      if (y?.id == null || y.id === '') return;
+      m.set(String(y.id), y.name || `Year ${y.id}`);
+    });
+
     let hasUnassigned = false;
     students.forEach((s) => {
       const id = s.year_level_id;
@@ -2607,7 +2827,9 @@ const StudentEvaluationView = ({
         return;
       }
       const name = s.year_level_name || `Year ${id}`;
-      m.set(String(id), name);
+      if (!m.has(String(id))) {
+        m.set(String(id), name);
+      }
     });
     const opts = [...m.entries()]
       .map(([id, name]) => ({ id, name }))
@@ -2616,10 +2838,17 @@ const StudentEvaluationView = ({
       opts.push({ id: '__unassigned__', name: 'Unassigned' });
     }
     return opts;
-  }, [students]);
+  }, [students, lookupYearLevels]);
 
+  // Server already applies Campus / Year / Standing; keep a light client pass so UI stays
+  // consistent if an older API response is briefly in state.
   const filteredStudents = useMemo(() => {
     let list = students;
+    if (listCampusFilter === '__unassigned__') {
+      list = list.filter((s) => s.campus_id == null || s.campus_id === '');
+    } else if (listCampusFilter) {
+      list = list.filter((s) => String(s.campus_id ?? '') === listCampusFilter);
+    }
     if (listYearLevelFilter === '__unassigned__') {
       list = list.filter((s) => s.year_level_id == null || s.year_level_id === '');
     } else if (listYearLevelFilter) {
@@ -2642,7 +2871,7 @@ const StudentEvaluationView = ({
     }
 
     return list;
-  }, [students, listYearLevelFilter, listStandingFilter]);
+  }, [students, listCampusFilter, listYearLevelFilter, listStandingFilter]);
 
   const evaluationFilterOptions = useMemo(() => {
     if (!data?.rows?.length) {
@@ -2882,13 +3111,17 @@ const StudentEvaluationView = ({
     [studentAcademicStatus]
   );
 
-  /** Dean / PH / Admin may set Year + Semester standing (promote or demote) for Irregular only. */
-  const canAlterIrregularStanding = !!(
+  /**
+   * Dean / PH / Admin may promote or demote by changing Year / Semester
+   * (confirmation modal). Works for Regular and Irregular.
+   */
+  const canAlterStandingViaFilters = !!(
     (isAdmin || isDean || isProgramHead) &&
-    isIrregularStudent &&
     canEditEvaluationRows &&
     !isEvaluatedModule
   );
+  /** @deprecated alias — older call sites / guide copy */
+  const canAlterIrregularStanding = canAlterStandingViaFilters;
 
   const yearsAllowedForFilter = useMemo(() => {
     const base = evaluationFilterOptions.years;
@@ -3036,11 +3269,23 @@ const StudentEvaluationView = ({
 
   /**
    * Current standing term for filters / Current subjects / school-year label.
-   * After Promote, use the promotion target (e.g. 2nd Yr 1st Sem) even when
-   * earned units still say 1st year. Otherwise profile standing, else units + Lookup.
+   * Year level follows earned units (46→2nd, 94→3rd, 132→4th) for Regular and
+   * Irregular — stale profile years (e.g. still 1st Year with 107 earned) must
+   * not keep Year/Semester stuck behind Standing.
+   * Profile/promotion may only win when at or ahead of the units-based year
+   * (manual promote). Dean demote while browsing uses evalFilterBrowseUnlocked.
    */
   const activeSemesterStandingTerm = useMemo(() => {
     if (!orderedCurriculumTerms.length) return null;
+
+    const unitsOrd = yearOrdinalForStandingId(unitsBasedYearId);
+    const activeSemId =
+      data?.active_semester?.semester_id != null && data.active_semester.semester_id !== ''
+        ? data.active_semester.semester_id
+        : null;
+
+    /** Year from promotion / profile / units; semester always follows Lookup active semester. */
+    let standingYearId = unitsBasedYearId ? String(unitsBasedYearId) : null;
 
     const ty = data?.student?.promotion_target_year_level_id;
     const ts = data?.student?.promotion_target_semester_id;
@@ -3051,43 +3296,65 @@ const StudentEvaluationView = ({
       ts != null &&
       ts !== ''
     ) {
+      const promotedOrd = yearOrdinalForStandingId(ty);
+      if (
+        Number.isFinite(promotedOrd) &&
+        Number.isFinite(unitsOrd) &&
+        promotedOrd >= unitsOrd
+      ) {
+        standingYearId = String(ty);
+      }
+    }
+
+    if (!standingYearId || standingYearId === String(unitsBasedYearId)) {
+      const py = data?.student?.year_level_id;
+      if (py != null && py !== '') {
+        const profileOrd = yearOrdinalForStandingId(py);
+        const profileBeyondCurriculum =
+          Number.isFinite(profileOrd) && profileOrd > curriculumMaxYearId;
+        if (
+          !profileBeyondCurriculum &&
+          Number.isFinite(profileOrd) &&
+          Number.isFinite(unitsOrd) &&
+          profileOrd >= unitsOrd
+        ) {
+          standingYearId = String(py);
+        }
+      }
+    }
+
+    if (!standingYearId) return null;
+
+    if (activeSemId != null) {
+      const withActive = findCurriculumTerm(standingYearId, activeSemId);
+      if (withActive) return withActive;
+    }
+
+    // Fallback only when active semester is missing from this curriculum year.
+    if (
+      data?.student?.promoted_next_sem_at &&
+      ty != null &&
+      ty !== '' &&
+      ts != null &&
+      ts !== '' &&
+      String(ty) === standingYearId
+    ) {
       const promotedTerm = findCurriculumTerm(ty, ts);
       if (promotedTerm) return promotedTerm;
     }
 
-    // Profile year/sem after promote (may be ahead of units-based year).
-    // Irregular: Dean/PH may also demote — always honor stored profile standing.
-    const py = data?.student?.year_level_id;
     const ps =
       data?.student?.semester_id != null && data.student.semester_id !== ''
         ? data.student.semester_id
         : null;
-    if (py != null && py !== '' && ps != null) {
-      const profileTerm = findCurriculumTerm(py, ps);
-      if (profileTerm && isIrregularStudent) {
-        return profileTerm;
-      }
-      const profileOrd = yearOrdinalForStandingId(py);
-      const unitsOrd = yearOrdinalForStandingId(unitsBasedYearId);
-      // Honor profile ahead of units (e.g. promote before units catch up), but never
-      // treat extended-study years (5th+) as standing for Regular — those are
-      // planning containers only and must not override units-based Year Level.
-      const profileBeyondCurriculum =
-        Number.isFinite(profileOrd) && profileOrd > curriculumMaxYearId;
-      if (profileTerm && profileOrd >= unitsOrd && !profileBeyondCurriculum) {
-        return profileTerm;
-      }
+    if (ps != null) {
+      const profileTerm = findCurriculumTerm(standingYearId, ps);
+      if (profileTerm) return profileTerm;
     }
 
-    if (!unitsBasedYearId) return null;
-    const activeSemId = data?.active_semester?.semester_id;
-    if (activeSemId != null && activeSemId !== '') {
-      const activeTerm = findCurriculumTerm(unitsBasedYearId, activeSemId);
-      if (activeTerm) return activeTerm;
-    }
     return (
       orderedCurriculumTerms.find(
-        (t) => String(t.year_level_id) === String(unitsBasedYearId)
+        (t) => String(t.year_level_id) === String(standingYearId)
       ) || null
     );
   }, [
@@ -3101,7 +3368,6 @@ const StudentEvaluationView = ({
     data?.active_semester?.semester_id,
     findCurriculumTerm,
     yearOrdinalForStandingId,
-    isIrregularStudent,
     curriculumMaxYearId,
   ]);
 
@@ -3180,9 +3446,9 @@ const StudentEvaluationView = ({
     );
   }, [data, evalFilterYearId, orderedCurriculumTerms, extendedYearIds]);
 
-  const applyIrregularStandingChange = useCallback(
+  const applyStandingChangeViaFilters = useCallback(
     async (nextYearId, nextSemId) => {
-      if (!canAlterIrregularStanding || standingSaving) return;
+      if (!canAlterStandingViaFilters || standingSaving) return;
       const yearId = String(nextYearId || '');
       let semId = String(nextSemId || '');
       if (!yearId) return;
@@ -3241,13 +3507,14 @@ const StudentEvaluationView = ({
               : 'set'
           : 'set';
 
+      const statusLabel = isIrregularStudent ? 'Irregular' : 'Regular';
       const ok = await swalConfirm(
         action === 'demote'
-          ? 'Demote irregular student?'
+          ? `Demote ${statusLabel.toLowerCase()} student?`
           : action === 'promote'
-            ? 'Promote irregular student?'
+            ? `Promote ${statusLabel.toLowerCase()} student?`
             : 'Change standing?',
-        `Change standing from ${fromYear} — ${fromSem} to ${toYear} — ${toSem}?\n\nOnly Irregular students can be moved this way by Dean / Program Head.`,
+        `Change standing from ${fromYear} — ${fromSem} to ${toYear} — ${toSem}?\n\nThis updates the student’s Year / Semester standing.`,
         action === 'demote' ? 'Demote' : action === 'promote' ? 'Promote' : 'Apply',
         'Cancel'
       );
@@ -3255,6 +3522,7 @@ const StudentEvaluationView = ({
 
       const prevYear = evalFilterYearId;
       const prevSem = evalFilterSemesterId;
+      setEvalFilterBrowseUnlocked(true);
       setEvalFilterYearId(yearId);
       setEvalFilterSemesterId(semId);
       const saved = await persistStudentStanding({
@@ -3268,7 +3536,7 @@ const StudentEvaluationView = ({
       }
     },
     [
-      canAlterIrregularStanding,
+      canAlterStandingViaFilters,
       standingSaving,
       yearsAllowedForFilter,
       evaluationFilterOptions.years,
@@ -3277,6 +3545,7 @@ const StudentEvaluationView = ({
       evalFilterSemesterId,
       semesterOptionsForYear,
       persistStudentStanding,
+      isIrregularStudent,
     ]
   );
 
@@ -4884,6 +5153,11 @@ const StudentEvaluationView = ({
     promotionModalRows.length,
   ]);
 
+  // Reset browse lock when switching students.
+  useEffect(() => {
+    setEvalFilterBrowseUnlocked(false);
+  }, [data?.student?.student_id]);
+
   useEffect(() => {
     if (!data?.rows?.length || !orderedCurriculumTerms.length) {
       setEvalFilterYearId('');
@@ -4898,7 +5172,12 @@ const StudentEvaluationView = ({
         : '';
     setEvalFilterCurriculumId(curriculumId);
 
-    // Prefer promotion / profile standing term (may be ahead of earned-units year).
+    // While browsing Year/Semester, do not snap filters back to standing.
+    if (evalFilterBrowseUnlocked) {
+      return;
+    }
+
+    // Prefer standing term (units-based year for Regular; promotion only when ahead).
     if (activeSemesterStandingTerm) {
       setEvalFilterYearId(String(activeSemesterStandingTerm.year_level_id));
       setEvalFilterSemesterId(String(activeSemesterStandingTerm.semester_id));
@@ -4928,36 +5207,45 @@ const StudentEvaluationView = ({
     orderedCurriculumTerms,
     unitsBasedYearId,
     activeSemesterStandingTerm,
+    evalFilterBrowseUnlocked,
   ]);
 
-  // Keep profile standing aligned with the active standing term (promotion wins over units).
+  // Keep profile standing aligned with earned-units standing. Filters may browse freely.
+  // Also lifts Irregular students stuck on a stale year (e.g. 1st Year with 107 units → 3rd).
   useEffect(() => {
     if (!canEditEvaluationRows || !activeSemesterStandingTerm || !data?.student?.student_id) {
       return;
     }
-    // Irregular Year/Semester is set explicitly by Dean/PH — do not auto-resync from units.
-    if (canAlterIrregularStanding) {
+    // Dean is manually promoting/demoting via Year/Semester — leave their choice alone.
+    if (canAlterIrregularStanding && evalFilterBrowseUnlocked) {
       return;
     }
 
     const nextYear = String(activeSemesterStandingTerm.year_level_id);
     const nextSem = String(activeSemesterStandingTerm.semester_id);
 
-    if (String(evalFilterYearId) !== nextYear) setEvalFilterYearId(nextYear);
-    if (String(evalFilterSemesterId) !== nextSem) setEvalFilterSemesterId(nextSem);
+    if (!evalFilterBrowseUnlocked) {
+      if (String(evalFilterYearId) !== nextYear) setEvalFilterYearId(nextYear);
+      if (String(evalFilterSemesterId) !== nextSem) setEvalFilterSemesterId(nextSem);
+    }
 
     const storedYear = data?.student?.year_level_id;
     const storedSem = data?.student?.semester_id;
     const targetYear = data?.student?.promotion_target_year_level_id;
     const targetSem = data?.student?.promotion_target_semester_id;
+    const unitsOrd = yearOrdinalForStandingId(unitsBasedYearId);
+    const targetOrd = yearOrdinalForStandingId(targetYear);
 
-    // Never write a standing earlier than an existing promotion target.
+    // Only block writes when promotion target is at/ahead of earned-units year.
     if (
       data?.student?.promoted_next_sem_at &&
       targetYear != null &&
       targetYear !== '' &&
       targetSem != null &&
-      targetSem !== ''
+      targetSem !== '' &&
+      Number.isFinite(targetOrd) &&
+      Number.isFinite(unitsOrd) &&
+      targetOrd >= unitsOrd
     ) {
       const nextIdx = orderedCurriculumTerms.findIndex(
         (t) =>
@@ -4988,6 +5276,7 @@ const StudentEvaluationView = ({
     activeSemesterStandingTerm,
     evalFilterYearId,
     evalFilterSemesterId,
+    evalFilterBrowseUnlocked,
     data?.student?.student_id,
     data?.student?.year_level_id,
     data?.student?.semester_id,
@@ -4996,6 +5285,8 @@ const StudentEvaluationView = ({
     data?.student?.promotion_target_semester_id,
     orderedCurriculumTerms,
     persistStudentStanding,
+    unitsBasedYearId,
+    yearOrdinalForStandingId,
   ]);
   useEffect(() => {
     if (!orderedCurriculumTerms.length || !evalFilterYearId || !evalFilterSemesterId) return;
@@ -5302,6 +5593,7 @@ const StudentEvaluationView = ({
         writeLastEvaluationSelection(selectionCacheKey, {
           student_id: st?.student_id ?? student.student_id ?? null,
           student_id_number: st?.student_id_number ?? student.student_id_number,
+          listCampusFilter,
           listYearLevelFilter,
           listStandingFilter,
         });
@@ -5322,6 +5614,7 @@ const StudentEvaluationView = ({
     unsavedChangeCount,
     applySavedEvaluation,
     selectionCacheKey,
+    listCampusFilter,
     listYearLevelFilter,
     listStandingFilter,
   ]);
@@ -5339,6 +5632,9 @@ const StudentEvaluationView = ({
   useEffect(() => {
     if (!selectionCacheKey || selectionRestoredRef.current) return;
     const saved = readLastEvaluationSelection(selectionCacheKey);
+    if (saved?.listCampusFilter) {
+      setListCampusFilter(saved.listCampusFilter);
+    }
     if (saved?.listYearLevelFilter) {
       setListYearLevelFilter(saved.listYearLevelFilter);
     }
@@ -5362,6 +5658,7 @@ const StudentEvaluationView = ({
     writeLastEvaluationSelection(selectionCacheKey, {
       student_id: selectedStudent.student_id,
       student_id_number: selectedStudent.student_id_number,
+      listCampusFilter,
       listYearLevelFilter,
       listStandingFilter,
     });
@@ -5369,6 +5666,7 @@ const StudentEvaluationView = ({
     selectionCacheKey,
     selectedStudent?.student_id,
     selectedStudent?.student_id_number,
+    listCampusFilter,
     listYearLevelFilter,
     listStandingFilter,
   ]);
@@ -6409,6 +6707,7 @@ const StudentEvaluationView = ({
       selectedStudent?.program_name ||
       'N/A';
     const trackLabel = student.track?.track_name || student.track?.track_code || 'Not assigned';
+    const campusLabel = student.campus?.campus_name || 'Not assigned';
     const generatedAt = new Date().toLocaleString();
     const allTermKeys = downloadTermOptions.map((option) => option.key);
     let selectedKeys = allTermKeys;
@@ -6532,6 +6831,7 @@ const StudentEvaluationView = ({
       studentNumber,
       programLabel,
       trackLabel,
+      campusLabel,
       academicStatus: data.computed_academic_status || student.academic_status || 'N/A',
       studentEntryType: student.student_entry_type || '',
       selectedLabel,
@@ -6621,6 +6921,7 @@ const StudentEvaluationView = ({
       selectedStudent?.program_name ||
       'N/A';
     const trackLabel = student.track?.track_name || student.track?.track_code || 'Not assigned';
+    const campusLabel = student.campus?.campus_name || 'Not assigned';
     const allTermKeys = downloadTermOptions.map((option) => option.key);
     let selectedKeys = allTermKeys;
     if (downloadScope === 'current') {
@@ -6660,6 +6961,7 @@ const StudentEvaluationView = ({
       ['Student Name', studentName],
       ['Student ID Number', studentNumber],
       ['Program', programLabel],
+      ['Campus', campusLabel],
       ['Track', trackLabel],
       ['Academic Status', data.computed_academic_status || student.academic_status || 'N/A'],
       ['Curriculum Units', data.summary?.total_units_in_curriculum ?? 0],
@@ -6805,6 +7107,9 @@ const StudentEvaluationView = ({
     const trackLine = student?.track
       ? `${student.track.track_name || 'Track'}${student.track.track_code ? ` (${student.track.track_code})` : ''}`
       : null;
+    const campusLine = student?.campus?.campus_name
+      ? String(student.campus.campus_name)
+      : null;
 
     const isPromotedNextSem = (() => {
       if (!student?.promoted_next_sem_at) return false;
@@ -6852,6 +7157,17 @@ const StudentEvaluationView = ({
       if (targetY == null || targetS == null) return '';
       // Show next term whenever a promotion target exists (not only when badge logic passes).
       if (!promotedAtRaw && !isPromotedNextSem) return '';
+      const targetOrd = yearOrdinalForStandingId(targetY);
+      const unitsOrd = yearStandingFromEarnedUnits(summary?.total_units_earned);
+      // Hide stale targets that sit behind earned-units standing (e.g. Y2 after 132+ units).
+      if (
+        !isIrregularStatus &&
+        Number.isFinite(targetOrd) &&
+        Number.isFinite(unitsOrd) &&
+        targetOrd < unitsOrd
+      ) {
+        return '';
+      }
       const term = orderedCurriculumTerms.find(
         (t) =>
           String(t.year_level_id) === String(targetY) &&
@@ -6994,6 +7310,32 @@ const StudentEvaluationView = ({
                 Previous program: <strong>{previousProgramName}</strong>
               </div>
             ) : null}
+            {canAssignCampus ? (
+              <button
+                type="button"
+                className={`eval-hero__campus eval-hero__campus--editable${
+                  campusLine ? '' : ' eval-hero__campus--none'
+                }`}
+                onClick={() => void openCampusAssignModal()}
+                title="Click to assign or change campus (from Admin → Campus list)"
+              >
+                Campus:{' '}
+                {campusLine ? (
+                  <strong>{campusLine}</strong>
+                ) : (
+                  <em>not set — click to assign</em>
+                )}
+                <i className="fa-solid fa-pen eval-hero__campus-edit" aria-hidden />
+              </button>
+            ) : campusLine ? (
+              <div className="eval-hero__campus">
+                Campus: <strong>{campusLine}</strong>
+              </div>
+            ) : (
+              <div className="eval-hero__campus eval-hero__campus--none">
+                Campus: <em>not set — import a SIS file ending in the campus letter (e.g. M/P/I/B)</em>
+              </div>
+            )}
             {isItProgram ? (
               trackLine ? (
                 <div className="eval-hero__track">
@@ -7234,22 +7576,26 @@ const StudentEvaluationView = ({
             <select
               className="eval-filter-field__control"
               value={evalFilterYearId}
-              disabled={!canAlterIrregularStanding || standingSaving}
+              disabled={standingSaving || years.length === 0}
               onChange={(e) => {
-                if (!canAlterIrregularStanding) return;
-                void applyIrregularStandingChange(e.target.value, '');
+                const nextYear = e.target.value;
+                if (canAlterStandingViaFilters) {
+                  void applyStandingChangeViaFilters(nextYear, '');
+                  return;
+                }
+                setEvalFilterBrowseUnlocked(true);
+                setEvalFilterYearId(nextYear);
+                const firstSem = orderedCurriculumTerms.find(
+                  (t) => String(t.year_level_id) === String(nextYear)
+                );
+                setEvalFilterSemesterId(
+                  firstSem ? String(firstSem.semester_id) : ''
+                );
               }}
               title={
-                canAlterIrregularStanding
-                  ? 'Irregular only: Dean / Program Head can promote or demote by changing Year'
-                  : activeSemesterStandingTerm
-                    ? `Standing: ${activeSemesterStandingTerm.year_level_name || ''} ${
-                        activeSemesterStandingTerm.semester_name || ''
-                      }`.trim() +
-                      (data?.student?.promoted_next_sem_at
-                        ? ' (from promotion)'
-                        : ` · earned units ${data?.summary?.total_units_earned ?? 0}`)
-                    : `Calculated from earned units (${data?.summary?.total_units_earned ?? 0}): 46→2nd, 94→3rd, 132→4th`
+                canAlterStandingViaFilters
+                  ? 'Change Year to promote or demote (confirmation required)'
+                  : `Browse curriculum year. Standing year follows earned units (${data?.summary?.total_units_earned ?? 0}): 46→2nd, 94→3rd, 132→4th`
               }
             >
               {years.map((o) => (
@@ -7265,19 +7611,20 @@ const StudentEvaluationView = ({
             <select
               className="eval-filter-field__control"
               value={evalFilterSemesterId}
-              disabled={!canAlterIrregularStanding || standingSaving || !evalFilterYearId}
+              disabled={standingSaving || !evalFilterYearId || semesterOptionsForYear.length === 0}
               onChange={(e) => {
-                if (!canAlterIrregularStanding) return;
-                void applyIrregularStandingChange(evalFilterYearId, e.target.value);
+                const nextSem = e.target.value;
+                if (canAlterStandingViaFilters) {
+                  void applyStandingChangeViaFilters(evalFilterYearId, nextSem);
+                  return;
+                }
+                setEvalFilterBrowseUnlocked(true);
+                setEvalFilterSemesterId(nextSem);
               }}
               title={
-                canAlterIrregularStanding
-                  ? 'Irregular only: Dean / Program Head can promote or demote by changing Semester'
-                  : data?.student?.promoted_next_sem_at
-                    ? 'Follows promotion target semester'
-                    : data?.active_semester?.semester_name
-                      ? `Follows Lookup active semester: ${data.active_semester.semester_name}`
-                      : 'Follows Lookup → Semesters active row'
+                canAlterStandingViaFilters
+                  ? 'Change Semester to promote or demote (confirmation required)'
+                  : 'Browse curriculum semester (does not change standing)'
               }
             >
               {semesterOptionsForYear.map((o) => (
@@ -7305,12 +7652,20 @@ const StudentEvaluationView = ({
         ) : null}
         <p className="eval-filter-context" aria-live="polite">
           {String(standingBanner || `${currentYearLabel} — ${currentSemLabel}`).toUpperCase()}
-          {canAlterIrregularStanding ? (
+          {canAlterStandingViaFilters ? (
             <span className="eval-filter-context__hint">
               {' '}
-              · Year / Semester editable (Irregular — promote or demote)
+              · Year / Semester editable — promote or demote (asks for confirmation)
             </span>
-          ) : null}
+          ) : (
+            <span className="eval-filter-context__hint">
+              {' '}
+              · Year / Semester clickable to browse
+              {unitsBasedYearStanding
+                ? ` · Standing ${ordinalYearLabel(unitsBasedYearStanding)} year (from earned units)`
+                : ''}
+            </span>
+          )}
         </p>
       </>
     );
@@ -8739,6 +9094,24 @@ const StudentEvaluationView = ({
           </div>
 
           <div className="eval-student-selector-grid">
+            <label className="eval-list-toolbar__field">
+              <span className="eval-list-toolbar__hint">Campus</span>
+              <select
+                className="eval-list-toolbar__select"
+                value={listCampusFilter}
+                onChange={(e) => setListCampusFilter(e.target.value)}
+                aria-label="Filter by campus"
+              >
+                <option value="">All campuses</option>
+                {lookupCampuses.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+                <option value="__unassigned__">Unassigned</option>
+              </select>
+            </label>
+
             <label className="eval-list-toolbar__field">
               <span className="eval-list-toolbar__hint">Year level</span>
               <select

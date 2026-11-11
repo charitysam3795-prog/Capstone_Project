@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\ElectiveSlot;
+use App\Models\ElectiveSubject;
 use App\Models\Subject;
 use App\Models\Track;
 use Illuminate\Support\Collection;
@@ -40,7 +42,8 @@ class ElectiveSubjectResolver
         $isItElectivesFour = self::isItElectivesFourSlot($slotName);
         $isDigitalArtsTrack = self::isDigitalArtsTrackId($studentTrackId, $electiveSubjects);
 
-        // Elective 4: Digi auto-fills ITE 388; other tracks stay blank unless already recorded.
+        // Elective 4: Digi auto-fills ITE 388; other tracks use a slot-stamped evaluation
+        // (or an imported free-choice grade that is not their track Elective 1–3 subject).
         if ($isItElectivesFour) {
             if ($isDigitalArtsTrack && $studentTrackId) {
                 $matched = self::digitalArtsElectiveFourChoice($electiveSubjects, $studentTrackId);
@@ -49,12 +52,23 @@ class ElectiveSubjectResolver
                 }
             }
 
-            return self::resolveFromExistingEvaluation(
+            $fromSlot = self::resolveFromExistingEvaluation(
                 $electiveSubjects,
                 $curriculumSemesterId,
                 $studentEvaluations,
                 $electiveSlotId,
                 true
+            );
+            if ($fromSlot) {
+                return $fromSlot;
+            }
+
+            return self::resolveElectiveFourFreeChoiceFromEvaluation(
+                $electiveSubjects,
+                $curriculumSemesterId,
+                $studentEvaluations,
+                $studentTrackId,
+                $electiveSlotId
             );
         }
 
@@ -150,6 +164,132 @@ class ElectiveSubjectResolver
 
             return $code === self::DIGITAL_ARTS_ELECTIVE_4_CODE;
         });
+    }
+
+    /**
+     * For non-Digi Elective 4: pick an imported free-choice grade even when elective_slot_id
+     * was not stamped (legacy imports). Skips the student's own track Elective 1–3 subjects.
+     *
+     * @param  Collection<int, \App\Models\ElectiveSubject>  $electiveSubjects
+     * @param  Collection<int, \App\Models\Evaluation>  $studentEvaluations
+     */
+    protected static function resolveElectiveFourFreeChoiceFromEvaluation(
+        Collection $electiveSubjects,
+        ?int $curriculumSemesterId,
+        Collection $studentEvaluations,
+        ?int $studentTrackId,
+        ?int $electiveSlotId = null
+    ): ?Subject {
+        if ($studentEvaluations->isEmpty() || $electiveSubjects->isEmpty()) {
+            return null;
+        }
+
+        $blockedSubjectIds = [];
+        if ($studentTrackId && $electiveSlotId) {
+            $programId = (int) ($electiveSubjects->first()?->program_id ?? 0);
+            if ($programId <= 0) {
+                $slot = ElectiveSlot::query()->find($electiveSlotId);
+                $programId = (int) ($slot?->program_id ?? 0);
+            }
+            if ($programId > 0) {
+                $blockedSubjectIds = self::trackLockedEarlierElectiveSubjectIds($programId, $studentTrackId);
+            }
+        }
+
+        $optionSubjectIds = $electiveSubjects
+            ->pluck('subject_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        $matching = $studentEvaluations->filter(function ($ev) use ($optionSubjectIds, $blockedSubjectIds) {
+            $sid = $ev->subject_id !== null ? (int) $ev->subject_id : 0;
+            if ($sid <= 0 || ! $optionSubjectIds->contains($sid)) {
+                return false;
+            }
+
+            // Skip the student's own track Elective 1–3 subject (e.g. SysDev ITE 387).
+            return ! isset($blockedSubjectIds[$sid]);
+        });
+
+        if ($matching->isEmpty()) {
+            return null;
+        }
+
+        // Prefer the common Elective 4 free-choice codes when several options exist.
+        $preferred = [];
+        foreach (ElectiveSlotFromImportAssigner::ELECTIVE_4_PREFERRED_CODES as $code) {
+            $preferred[$code] = true;
+        }
+        $preferredMatches = $matching->filter(function ($ev) use ($preferred, $electiveSubjects) {
+            $sid = (int) $ev->subject_id;
+            $code = strtoupper(preg_replace('/\s+/', '', (string) (
+                $ev->subject?->subject_code
+                ?? $electiveSubjects->first(fn ($es) => (int) $es->subject_id === $sid)?->subject?->subject_code
+                ?? ''
+            )) ?? '');
+
+            return $code !== '' && isset($preferred[$code]);
+        });
+        if ($preferredMatches->isNotEmpty()) {
+            $matching = $preferredMatches;
+        }
+
+        return self::pickPreferredEvaluationSubject($matching, $curriculumSemesterId);
+    }
+
+    /**
+     * @return array<int, true> subject_id => true
+     */
+    protected static function trackLockedEarlierElectiveSubjectIds(int $programId, int $trackId): array
+    {
+        $slots = ElectiveSlot::query()
+            ->where('program_id', $programId)
+            ->where('status', 'active')
+            ->get(['elective_slot_id', 'slot_name']);
+
+        $ids = [];
+        foreach ($slots as $slot) {
+            $name = strtolower(trim((string) $slot->slot_name));
+            if (! preg_match('/\bit\s*electives?\s*[123]\b/', $name)) {
+                continue;
+            }
+            $subjectIds = ElectiveSubject::query()
+                ->where('elective_slot_id', $slot->elective_slot_id)
+                ->where('track_id', $trackId)
+                ->pluck('subject_id');
+            foreach ($subjectIds as $sid) {
+                $ids[(int) $sid] = true;
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * @param  Collection<int, \App\Models\Evaluation>  $matching
+     */
+    protected static function pickPreferredEvaluationSubject(Collection $matching, ?int $curriculumSemesterId): ?Subject
+    {
+        $sortKey = fn ($ev) => sprintf(
+            '%010d-%010d',
+            (int) $ev->academic_year_id,
+            (int) $ev->evaluation_id
+        );
+
+        if ($curriculumSemesterId !== null) {
+            $semMatch = $matching
+                ->filter(fn ($ev) => (int) $ev->semester_id === (int) $curriculumSemesterId)
+                ->sortByDesc($sortKey);
+            $pick = $semMatch->first();
+            if ($pick && $pick->subject) {
+                return $pick->subject;
+            }
+        }
+
+        $pick = $matching->sortByDesc($sortKey)->first();
+
+        return $pick?->subject;
     }
 
     protected static function resolveFromExistingEvaluation(

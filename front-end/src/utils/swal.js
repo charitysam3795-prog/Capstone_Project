@@ -102,6 +102,47 @@ export function swalInfo(title, text) {
   );
 }
 
+/**
+ * Confirm with a dropdown. Returns the selected value string, or null if cancelled.
+ * @param {{ title?: string, text?: string, inputOptions: Record<string,string>, inputValue?: string, confirmButtonText?: string, cancelButtonText?: string }} opts
+ */
+export async function swalSelect(opts = {}) {
+  const {
+    title = 'Select',
+    text = '',
+    inputOptions = {},
+    inputValue = '',
+    confirmButtonText = 'Confirm',
+    cancelButtonText = 'Cancel',
+  } = opts;
+
+  const result = await Swal.fire(
+    withSwalLayer({
+      title,
+      text: text || undefined,
+      icon: 'question',
+      input: 'select',
+      inputOptions,
+      inputValue: inputValue || undefined,
+      inputPlaceholder: 'Select…',
+      showCancelButton: true,
+      confirmButtonText,
+      cancelButtonText,
+      reverseButtons: true,
+      focusCancel: true,
+      inputValidator: (value) => {
+        if (value === '' || value == null) {
+          return 'Please select an option';
+        }
+        return undefined;
+      },
+    })
+  );
+
+  if (!result.isConfirmed) return null;
+  return result.value == null ? null : String(result.value);
+}
+
 /** Top-end toast; use for non-blocking success messages */
 export function swalToast(icon, title) {
   const Toast = Swal.mixin({

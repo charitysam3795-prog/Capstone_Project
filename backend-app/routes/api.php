@@ -355,6 +355,7 @@ Route::middleware('auth:api')->group(function () {
         Route::middleware('evaluation.access')->group(function () {
             Route::post('/student/promote-next-semester', [StudentEvaluationController::class, 'promoteNextSemester']);
             Route::post('/student/standing', [StudentEvaluationController::class, 'updateStudentStanding']);
+            Route::post('/student/campus', [StudentEvaluationController::class, 'updateStudentCampus']);
             Route::post('/student/standing-load', [StudentEvaluationController::class, 'updateStudentStandingLoad']);
             Route::post('/student/major-standing-override', [StudentEvaluationController::class, 'updateMajorStandingOverride']);
             Route::post('/student/simulation-dummy', [StudentEvaluationController::class, 'createSimulationDummy']);

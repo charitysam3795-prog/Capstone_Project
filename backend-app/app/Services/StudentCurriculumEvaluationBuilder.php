@@ -12,6 +12,7 @@ use App\Models\Program;
 use App\Models\Semester;
 use App\Models\StudentProfile;
 use App\Models\TblUser;
+use App\Support\CachedSchema;
 use App\Support\ElectiveSlotPrerequisite;
 use Illuminate\Support\Facades\DB;
 
@@ -240,7 +241,11 @@ class StudentCurriculumEvaluationBuilder
      */
     public function buildPayload(StudentProfile $profile): array
     {
-        $profile->loadMissing(['program', 'track', 'previousProgram']);
+        $relations = ['program', 'track', 'previousProgram'];
+        if (CachedSchema::hasColumn('tbl_student_profile', 'campus_id')) {
+            $relations[] = 'campus';
+        }
+        $profile->loadMissing($relations);
 
         app(IncComplianceExpiryService::class)->expireOverdue($profile->student_id);
 
@@ -270,7 +275,9 @@ class StudentCurriculumEvaluationBuilder
                 : null
         );
 
-        $evaluations = Evaluation::where('student_id', $profile->student_id)
+        // One student at a time — full grade set is fine; eager-load avoids N+1 on subjects/evaluators.
+        $evaluations = Evaluation::query()
+            ->where('student_id', $profile->student_id)
             ->with(['subject', 'evaluatedBy'])
             ->get();
 
@@ -750,6 +757,177 @@ class StudentCurriculumEvaluationBuilder
     }
 
     /**
+     * Lightweight ordered curriculum terms for auto-promotion (no full row build).
+     *
+     * @return list<array{year_level_id: int, semester_id: int, semester_name: ?string}>
+     */
+    public function orderedCurriculumTermsForProgram(int $programId, ?int $headerId): array
+    {
+        $key = 'eval.terms.'.$programId.'.'.($headerId ?? 0);
+
+        return $this->rememberInRequest($key, function () use ($programId, $headerId) {
+            $query = Curriculum::query()
+                ->where('program_id', $programId)
+                ->whereNotNull('year_level')
+                ->whereNotNull('semester_id')
+                ->with('semester:semester_id,semester_name');
+            if ($headerId) {
+                $query->where('curriculum_header_id', $headerId);
+            }
+
+            $rows = $query
+                ->orderBy('year_level')
+                ->orderByRaw('CASE WHEN semester_id = 3 THEN 0 ELSE semester_id END')
+                ->get(['curriculum_id', 'year_level', 'semester_id']);
+
+            $seen = [];
+            $out = [];
+            foreach ($rows as $row) {
+                $y = (int) $row->year_level;
+                $s = (int) $row->semester_id;
+                $k = $y.'-'.$s;
+                if (isset($seen[$k])) {
+                    continue;
+                }
+                $seen[$k] = true;
+                $out[] = [
+                    'year_level_id' => $y,
+                    'semester_id' => $s,
+                    'semester_name' => $row->semester->semester_name ?? null,
+                ];
+            }
+
+            return $out;
+        });
+    }
+
+    /**
+     * Whether every curriculum slot in a term is passed (grades / credit), without buildPayload().
+     *
+     * @param  \Illuminate\Support\Collection<int, Evaluation>|null  $evaluations
+     * @param  \Illuminate\Support\Collection<int, mixed>|null  $transferCreditSubjectIds
+     */
+    public function isTermFullyPassedForStudent(
+        StudentProfile $profile,
+        int $yearLevelId,
+        int $semesterId,
+        $evaluations = null,
+        $transferCreditSubjectIds = null
+    ): bool {
+        $programId = (int) ($profile->current_program ?? 0);
+        if ($programId <= 0) {
+            return false;
+        }
+
+        $header = $this->resolveCurriculumHeaderForStudent($profile);
+        $headerId = $header?->curriculum_header_id !== null
+            ? (int) $header->curriculum_header_id
+            : null;
+
+        $slots = $this->termCurriculumSlotsForProgram($programId, $headerId, $yearLevelId, $semesterId);
+        if ($slots === []) {
+            return false;
+        }
+
+        if ($evaluations === null) {
+            $evaluations = Evaluation::where('student_id', $profile->student_id)->get();
+        }
+        if ($transferCreditSubjectIds === null) {
+            $transferCreditSubjectIds = $this->subjectIdsWithTransferCreditForStudent((int) $profile->student_id);
+        }
+
+        $evaluationsBySubject = $evaluations
+            ->groupBy('subject_id')
+            ->map(fn ($group) => $this->preferredEvaluationFromGroup($group));
+
+        $gradeHelper = app(GradeScaleHelper::class);
+        $creditSet = [];
+        foreach ($transferCreditSubjectIds as $sid) {
+            $creditSet[(int) $sid] = true;
+        }
+
+        foreach ($slots as $slot) {
+            $subjectIds = $slot['subject_ids'];
+            if ($subjectIds === []) {
+                return false;
+            }
+
+            $passed = false;
+            foreach ($subjectIds as $sid) {
+                $sid = (int) $sid;
+                if (isset($creditSet[$sid])) {
+                    $passed = true;
+                    break;
+                }
+                $evaluation = $evaluationsBySubject->get($sid);
+                if ($evaluation && $gradeHelper->gradeIndicatesPass(
+                    $evaluation->grade ?? null,
+                    $slot['passing_grade'],
+                    isset($evaluation->evaluation_status) ? (string) $evaluation->evaluation_status : null
+                )) {
+                    $passed = true;
+                    break;
+                }
+            }
+
+            if (! $passed) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Minimal curriculum slots for one term (fixed subjects + elective choice subject ids).
+     *
+     * @return list<array{subject_ids: list<int>, passing_grade: mixed}>
+     */
+    private function termCurriculumSlotsForProgram(
+        int $programId,
+        ?int $headerId,
+        int $yearLevelId,
+        int $semesterId
+    ): array {
+        $key = 'eval.term_slots.'.$programId.'.'.($headerId ?? 0).'.'.$yearLevelId.'.'.$semesterId;
+
+        return $this->rememberInRequest($key, function () use ($programId, $headerId, $yearLevelId, $semesterId) {
+            $query = Curriculum::query()
+                ->where('program_id', $programId)
+                ->where('year_level', $yearLevelId)
+                ->where('semester_id', $semesterId)
+                ->with(['electiveSlot.electiveSubjects:elective_subject_id,elective_slot_id,subject_id,track_id']);
+            if ($headerId) {
+                $query->where('curriculum_header_id', $headerId);
+            }
+
+            $items = $query->get(['curriculum_id', 'subject_id', 'elective_slot_id', 'passing_grade']);
+            $out = [];
+            foreach ($items as $item) {
+                $subjectIds = [];
+                if ($item->subject_id !== null && $item->subject_id !== '') {
+                    $subjectIds[] = (int) $item->subject_id;
+                } else {
+                    $choices = $item->electiveSlot?->electiveSubjects ?? collect();
+                    foreach ($choices as $es) {
+                        if ($es->subject_id !== null && $es->subject_id !== '') {
+                            $subjectIds[] = (int) $es->subject_id;
+                        }
+                    }
+                    $subjectIds = array_values(array_unique($subjectIds));
+                }
+
+                $out[] = [
+                    'subject_ids' => $subjectIds,
+                    'passing_grade' => $item->passing_grade,
+                ];
+            }
+
+            return $out;
+        });
+    }
+
+    /**
      * @return \Illuminate\Support\Collection<int, Curriculum>
      */
     private function curriculumRowsForProgram(int $programId, ?int $headerId)
@@ -1142,10 +1320,11 @@ class StudentCurriculumEvaluationBuilder
      * Persist academic_status from the same curriculum evaluation payload as
      * computed_academic_status (Regular / Irregular from sequence rules).
      *
-     * Do not advance year_level_id here. Term/year movement is an explicit promotion
-     * decision handled by StudentEvaluationController::promoteNextSemester().
+     * Also lifts year_level_id to match earned-units standing (46→2nd, 94→3rd, 132→4th)
+     * when the stored year is behind. Does not demote a year that is already ahead
+     * (manual / auto promotion). Semester movement remains an explicit promote action.
      *
-     * @param  array{rows?: list<array<string, mixed>>, computed_academic_status?: string}|null  $built  From buildPayload(); omit to run one build.
+     * @param  array{rows?: list<array<string, mixed>>, computed_academic_status?: string, summary?: array{total_units_earned?: int|float}}|null  $built  From buildPayload(); omit to run one build.
      */
     public function syncStudentProfileFromCurriculumProgress(StudentProfile $profile, ?array $built = null): bool
     {
@@ -1173,6 +1352,20 @@ class StudentCurriculumEvaluationBuilder
             }
         }
 
+        $earned = (float) ($built['summary']['total_units_earned'] ?? 0);
+        $unitsYearOrdinal = $earned >= 132 ? 4 : ($earned >= 94 ? 3 : ($earned >= 46 ? 2 : 1));
+        $unitsYearId = $this->resolveYearLevelIdForOrdinal($unitsYearOrdinal);
+        $currentYearId = $profile->year_level_id !== null && $profile->year_level_id !== ''
+            ? (int) $profile->year_level_id
+            : null;
+        if (
+            $unitsYearId !== null
+            && ($currentYearId === null || $currentYearId < $unitsYearId)
+        ) {
+            $profile->year_level_id = $unitsYearId;
+            $changed = true;
+        }
+
         // Keep promoted_next_sem_at / promoted_next_sem_by for Irregular students.
         // Manual "Promote to next semester" sets those fields; clearing them here
         // wiped Promotion date on the evaluation hero after every promote save.
@@ -1182,6 +1375,31 @@ class StudentCurriculumEvaluationBuilder
         }
 
         return $profile->save();
+    }
+
+    /** Map 1..4 standing ordinal → year_level_id (ids usually match; fall back to label match). */
+    private function resolveYearLevelIdForOrdinal(int $ordinal): ?int
+    {
+        if ($ordinal < 1) {
+            return null;
+        }
+
+        return $this->rememberInRequest('eval.year_id_ord.'.$ordinal, static function () use ($ordinal) {
+            $direct = DB::table('year_level')->where('year_level_id', $ordinal)->value('year_level_id');
+            if ($direct) {
+                return (int) $direct;
+            }
+
+            $rows = DB::table('year_level')->get(['year_level_id', 'year_level']);
+            foreach ($rows as $row) {
+                $label = strtolower(trim((string) ($row->year_level ?? '')));
+                if (preg_match('/\b'.$ordinal.'(st|nd|rd|th)?\b/', $label)) {
+                    return (int) $row->year_level_id;
+                }
+            }
+
+            return null;
+        });
     }
 
     /**
@@ -1350,6 +1568,13 @@ class StudentCurriculumEvaluationBuilder
         if (! $profile->relationLoaded('academicYear')) {
             $profile->load('academicYear');
         }
+        if (
+            CachedSchema::hasColumn('tbl_student_profile', 'campus_id')
+            && ! $profile->relationLoaded('campus')
+        ) {
+            $profile->load('campus');
+        }
+        $campus = $profile->relationLoaded('campus') ? $profile->campus : null;
 
         $yearLevelName = $profile->yearLevel?->year_level;
         $semesterName = $profile->semester?->semester_name;
@@ -1388,6 +1613,13 @@ class StudentCurriculumEvaluationBuilder
                     'track_id' => $track->track_id,
                     'track_name' => $track->track_name,
                     'track_code' => $track->track_code,
+                ]
+                : null,
+            'campus_id' => $campus?->campus_id ?? $profile->campus_id,
+            'campus' => $campus
+                ? [
+                    'campus_id' => $campus->campus_id,
+                    'campus_name' => $campus->campus_name,
                 ]
                 : null,
             'program' => $profile->program,

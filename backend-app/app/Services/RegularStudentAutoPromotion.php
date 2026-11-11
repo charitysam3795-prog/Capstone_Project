@@ -3,8 +3,13 @@
 namespace App\Services;
 
 use App\Models\AcademicRecordEvaluationComplete;
+use App\Models\Evaluation;
 use App\Models\StudentProfile;
 use App\Support\CachedSchema;
+use App\Support\HeavyRequest;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Regular students with a fully passed current-term load advance automatically.
@@ -21,20 +26,42 @@ class RegularStudentAutoPromotion
      * When a lookup semester is activated: Regulars whose current term is fully passed
      * and whose next curriculum term is that semester are promoted. Irregulars are not moved.
      *
+     * Uses lightweight term/grade checks — does not call buildPayload() per student.
+     *
      * @return array{promoted: int, skipped_irregular: int, skipped_incomplete: int, unchanged: int}
      */
     public function advanceOnSemesterActivation(int $activatedSemesterId, ?int $actorUserId = null): array
     {
+        $this->raiseResourceLimits();
+
         $stats = $this->emptyStats();
-        $query = StudentProfile::query()->with(['program', 'track']);
+        $termCache = [];
+
+        $query = StudentProfile::query();
         if (CachedSchema::hasColumn('tbl_student_profile', 'is_simulation')) {
             $query->where(function ($q) {
                 $q->where('is_simulation', false)->orWhereNull('is_simulation');
             });
         }
 
-        foreach ($query->get() as $profile) {
-            $stats[$this->promoteOneStepToSemester($profile, $activatedSemesterId, $actorUserId)]++;
+        AuditTrailService::suppress();
+        try {
+            $query->orderBy('student_id')->chunkById(HeavyRequest::STUDENT_CHUNK, function ($profiles) use (
+                $activatedSemesterId,
+                $actorUserId,
+                &$stats,
+                &$termCache
+            ) {
+                $this->processChunk($profiles, $activatedSemesterId, $actorUserId, $stats, $termCache);
+            }, 'student_id');
+        } catch (\Throwable $e) {
+            Log::error('RegularStudentAutoPromotion failed during semester activation', [
+                'activated_semester_id' => $activatedSemesterId,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        } finally {
+            AuditTrailService::resume();
         }
 
         return $stats;
@@ -72,42 +99,157 @@ class RegularStudentAutoPromotion
     }
 
     /**
-     * @return 'promoted'|'skipped_irregular'|'skipped_incomplete'|'unchanged'
+     * @param  \Illuminate\Support\Collection<int, StudentProfile>  $profiles
+     * @param  array{promoted: int, skipped_irregular: int, skipped_incomplete: int, unchanged: int}  $stats
+     * @param  array<string, list<array{year_level_id: int, semester_id: int, semester_name?: string|null}>>  $termCache
      */
-    private function promoteOneStepToSemester(
-        StudentProfile $profile,
+    private function processChunk(
+        $profiles,
         int $activatedSemesterId,
-        ?int $actorUserId
-    ): string {
-        $built = $this->builder->buildPayload($profile);
-        $this->builder->syncStudentProfileFromCurriculumProgress($profile, $built);
-        $profile->refresh();
+        ?int $actorUserId,
+        array &$stats,
+        array &$termCache
+    ): void {
+        /** @var list<array{profile: StudentProfile, current: array{year_level_id: int, semester_id: int}, next: array{year_level_id: int, semester_id: int}}> $candidates */
+        $candidates = [];
 
-        $status = strtolower(trim((string) ($built['computed_academic_status'] ?? $profile->academic_status ?? '')));
-        if ($status === 'irregular') {
-            return 'skipped_irregular';
+        foreach ($profiles as $profile) {
+            $status = strtolower(trim((string) ($profile->academic_status ?? '')));
+            if ($status === 'irregular') {
+                $stats['skipped_irregular']++;
+                continue;
+            }
+
+            $programId = (int) ($profile->current_program ?? 0);
+            if ($programId <= 0) {
+                $stats['unchanged']++;
+                continue;
+            }
+
+            $header = $this->builder->resolveCurriculumHeaderForStudent($profile);
+            $headerId = $header?->curriculum_header_id !== null
+                ? (int) $header->curriculum_header_id
+                : null;
+            $cacheKey = $programId.'-'.($headerId ?? 0);
+
+            if (! isset($termCache[$cacheKey])) {
+                $termCache[$cacheKey] = $this->builder->orderedCurriculumTermsForProgram($programId, $headerId);
+            }
+            $terms = $termCache[$cacheKey];
+            if ($terms === []) {
+                $stats['unchanged']++;
+                continue;
+            }
+
+            $idx = $this->standingTermIndex($profile, $terms);
+            $current = $terms[$idx];
+            if (! isset($terms[$idx + 1])) {
+                $stats['unchanged']++;
+                continue;
+            }
+            $next = $terms[$idx + 1];
+            if ((int) $next['semester_id'] !== (int) $activatedSemesterId) {
+                $stats['unchanged']++;
+                continue;
+            }
+
+            $candidates[] = [
+                'profile' => $profile,
+                'current' => $current,
+                'next' => $next,
+            ];
         }
 
-        $rows = $built['rows'] ?? [];
-        $terms = $this->orderedDistinctTermKeys($rows);
-        if ($terms === []) {
-            return 'unchanged';
+        if ($candidates === []) {
+            return;
         }
 
-        $idx = $this->standingTermIndex($profile, $terms);
-        $current = $terms[$idx];
-        if (! $this->termFullyPassed($rows, $current['year_level_id'], $current['semester_id'])) {
-            return 'skipped_incomplete';
+        $studentIds = array_map(
+            static fn (array $c) => (int) $c['profile']->student_id,
+            $candidates
+        );
+
+        $evaluationsByStudent = Evaluation::query()
+            ->whereIn('student_id', $studentIds)
+            ->get([
+                'evaluation_id',
+                'student_id',
+                'subject_id',
+                'grade',
+                'evaluation_status',
+                'academic_year_id',
+                'semester_id',
+            ])
+            ->groupBy('student_id');
+
+        $transferByStudent = $this->transferCreditsForStudents($studentIds);
+
+        foreach ($candidates as $candidate) {
+            /** @var StudentProfile $profile */
+            $profile = $candidate['profile'];
+            $studentId = (int) $profile->student_id;
+            /** @var Collection<int, Evaluation> $evals */
+            $evals = $evaluationsByStudent->get($studentId, collect());
+            $credits = $transferByStudent[$studentId] ?? collect();
+
+            $passed = $this->builder->isTermFullyPassedForStudent(
+                $profile,
+                (int) $candidate['current']['year_level_id'],
+                (int) $candidate['current']['semester_id'],
+                $evals,
+                $credits
+            );
+
+            if (! $passed) {
+                $stats['skipped_incomplete']++;
+                continue;
+            }
+
+            $stats[$this->applyStanding(
+                $profile,
+                (int) $candidate['next']['year_level_id'],
+                (int) $candidate['next']['semester_id'],
+                $actorUserId
+            )]++;
         }
-        if (! isset($terms[$idx + 1])) {
-            return 'unchanged';
-        }
-        $next = $terms[$idx + 1];
-        if ((int) $next['semester_id'] !== (int) $activatedSemesterId) {
-            return 'unchanged';
+    }
+
+    /**
+     * @param  list<int>  $studentIds
+     * @return array<int, \Illuminate\Support\Collection<int, mixed>>
+     */
+    private function transferCreditsForStudents(array $studentIds): array
+    {
+        if ($studentIds === []) {
+            return [];
         }
 
-        return $this->applyStanding($profile, (int) $next['year_level_id'], (int) $next['semester_id'], $actorUserId);
+        $rows = DB::table('tbl_credit_evaluation_details as d')
+            ->join('tbl_credit_evaluation as e', 'd.credit_eval_id', '=', 'e.credit_eval_id')
+            ->where(function ($q) use ($studentIds) {
+                $q->whereIn('e.student_id', $studentIds)
+                    ->orWhereIn('d.student_id', $studentIds);
+            })
+            ->where('e.is_active', true)
+            ->whereNotNull('d.subject_id')
+            ->whereRaw('LOWER(TRIM(e.status)) = ?', ['approved'])
+            ->get(['e.student_id as eval_student_id', 'd.student_id as detail_student_id', 'd.subject_id']);
+
+        $map = [];
+        foreach ($rows as $row) {
+            $sid = (int) ($row->eval_student_id ?: $row->detail_student_id);
+            if ($sid <= 0) {
+                continue;
+            }
+            $map[$sid] ??= collect();
+            $map[$sid]->push((int) $row->subject_id);
+        }
+
+        foreach ($map as $sid => $collection) {
+            $map[$sid] = $collection->unique()->values();
+        }
+
+        return $map;
     }
 
     /**
@@ -180,79 +322,9 @@ class RegularStudentAutoPromotion
         return 'promoted';
     }
 
-    /**
-     * @param  list<array<string, mixed>>  $rows
-     */
-    private function termFullyPassed(array $rows, int $yearLevelId, int $semesterId): bool
+    private function raiseResourceLimits(): void
     {
-        $termRows = array_values(array_filter($rows, function ($row) use ($yearLevelId, $semesterId) {
-            return (int) ($row['year_level_id'] ?? 0) === $yearLevelId
-                && (int) ($row['semester_id'] ?? 0) === $semesterId;
-        }));
-
-        if ($termRows === []) {
-            return false;
-        }
-
-        foreach ($termRows as $row) {
-            if (! empty($row['elective_pending'])) {
-                return false;
-            }
-            if (! $this->builder->curriculumRowIndicatesPassed($row)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /**
-     * @param  list<array<string, mixed>>  $rows
-     * @return list<array{year_level_id: int, semester_id: int, semester_name?: string|null}>
-     */
-    private function orderedDistinctTermKeys(array $rows): array
-    {
-        $seen = [];
-        $out = [];
-        foreach ($rows as $row) {
-            $y = $row['year_level_id'] ?? null;
-            $s = $row['semester_id'] ?? null;
-            if ($y === null || $y === '' || $s === null || $s === '') {
-                continue;
-            }
-            $y = (int) $y;
-            $s = (int) $s;
-            $k = $y.'-'.$s;
-            if (isset($seen[$k])) {
-                continue;
-            }
-            $seen[$k] = true;
-            $out[] = [
-                'year_level_id' => $y,
-                'semester_id' => $s,
-                'semester_name' => $row['semester_name'] ?? null,
-            ];
-        }
-        usort($out, function ($a, $b) {
-            if ($a['year_level_id'] !== $b['year_level_id']) {
-                return $a['year_level_id'] <=> $b['year_level_id'];
-            }
-
-            return $this->semesterSortValue($a['semester_id'], $a['semester_name'] ?? null)
-                <=> $this->semesterSortValue($b['semester_id'], $b['semester_name'] ?? null);
-        });
-
-        return $out;
-    }
-
-    private function semesterSortValue(int $semesterId, ?string $semesterName = null): int
-    {
-        $name = strtolower(trim((string) $semesterName));
-        if (str_contains($name, 'summer') || $semesterId === 3) {
-            return 0;
-        }
-
-        return $semesterId;
+        HeavyRequest::forBatch();
     }
 
     /**

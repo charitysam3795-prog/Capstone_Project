@@ -20,10 +20,12 @@ use App\Models\Subject;
 use App\Models\Track;
 use App\Models\YearLevel;
 use App\Services\RegularStudentAutoPromotion;
+use App\Support\HeavyRequest;
 use App\Support\LookupDeleteGuard;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -89,6 +91,50 @@ class LookupDataController extends Controller
             $q->where('semester_id', '!=', $exceptSemesterId);
         }
         $q->update(['status' => 'inactive']);
+    }
+
+    /**
+     * Commit semester active/inactive first, then run auto-promotion outside that transaction
+     * so the lookup toggle cannot time out / roll back when many students exist.
+     *
+     * @return array{promoted: int, skipped_irregular: int, skipped_incomplete: int, unchanged: int}
+     */
+    private function applySemesterStatusAndPromote(Semester $semester, string $newStatus, ?int $actorUserId): array
+    {
+        HeavyRequest::forBatch();
+
+        $semesterId = (int) $semester->semester_id;
+
+        DB::transaction(function () use ($semester, $semesterId, $newStatus) {
+            if ($newStatus === 'active') {
+                $this->deactivateAllSemestersExcept($semesterId);
+            }
+            $semester->update(['status' => $newStatus]);
+        });
+
+        $promotionStats = [
+            'promoted' => 0,
+            'skipped_irregular' => 0,
+            'skipped_incomplete' => 0,
+            'unchanged' => 0,
+        ];
+
+        if ($newStatus !== 'active') {
+            return $promotionStats;
+        }
+
+        try {
+            $promotionStats = app(RegularStudentAutoPromotion::class)
+                ->advanceOnSemesterActivation($semesterId, $actorUserId);
+        } catch (\Throwable $e) {
+            Log::error('Semester activated but auto-promotion failed', [
+                'semester_id' => $semesterId,
+                'error' => $e->getMessage(),
+            ]);
+            $promotionStats['promotion_error'] = 'Semester status was saved; auto-promotion did not finish. Try Refresh Data or activate again.';
+        }
+
+        return $promotionStats;
     }
 
     /** Only one academic year is active: the current school year. */
@@ -158,29 +204,21 @@ class LookupDataController extends Controller
         $modelClass = $meta['model'];
         $row = $modelClass::query()->findOrFail($id);
 
-        $promotionStats = null;
         if ($lookupResource === 'semesters') {
-            $promotionStats = [
-                'promoted' => 0,
-                'skipped_irregular' => 0,
-                'skipped_incomplete' => 0,
-                'unchanged' => 0,
-            ];
-            DB::transaction(function () use ($row, $id, $status, $request, &$promotionStats) {
-                if ($status === 'active') {
-                    $this->deactivateAllSemestersExcept((int) $id);
-                }
-                $row->update(['status' => $status]);
-                if ($status === 'active') {
-                    $promotionStats = app(RegularStudentAutoPromotion::class)
-                        ->advanceOnSemesterActivation((int) $id, $request->user()?->user_id);
-                }
-            });
+            /** @var Semester $row */
+            $promotionStats = $this->applySemesterStatusAndPromote(
+                $row,
+                $status,
+                $request->user()?->user_id
+            );
             $row->refresh();
             $auto = app(RegularStudentAutoPromotion::class);
             $message = $status === 'active'
                 ? trim(($row->semester_name ?? 'Semester').' activated. '.$auto->formatSummary($promotionStats))
                 : 'Semester deactivated.';
+            if (! empty($promotionStats['promotion_error'])) {
+                $message .= ' '.$promotionStats['promotion_error'];
+            }
 
             return response()->json([
                 'message' => $message,
@@ -941,9 +979,28 @@ class LookupDataController extends Controller
         }
 
         $wasActive = $this->normalizedSemesterStatus($semester->status) === 'active';
-        $promotionStats = null;
 
-        DB::transaction(function () use ($semester, $id, $validated, $status, $wasActive, $request, &$promotionStats) {
+        // Name can update with or without a status change; keep activation path fast.
+        if ($status === 'active' && ! $wasActive) {
+            $semester->update(['semester_name' => $validated['semester_name']]);
+            $promotionStats = $this->applySemesterStatusAndPromote(
+                $semester,
+                $status,
+                $request->user()?->user_id
+            );
+            $semester->refresh();
+            $auto = app(RegularStudentAutoPromotion::class);
+            $payload = $semester->toArray();
+            $payload['auto_promotion'] = $promotionStats;
+            $payload['message'] = trim($semester->semester_name.' activated. '.$auto->formatSummary($promotionStats));
+            if (! empty($promotionStats['promotion_error'])) {
+                $payload['message'] .= ' '.$promotionStats['promotion_error'];
+            }
+
+            return response()->json($payload);
+        }
+
+        DB::transaction(function () use ($semester, $id, $validated, $status) {
             if ($status === 'active') {
                 $this->deactivateAllSemestersExcept((int) $id);
             }
@@ -952,23 +1009,11 @@ class LookupDataController extends Controller
                 'semester_name' => $validated['semester_name'],
                 'status' => $status,
             ]);
-
-            // Run auto-promotion when this semester becomes the active one.
-            if ($status === 'active' && ! $wasActive) {
-                $promotionStats = app(RegularStudentAutoPromotion::class)
-                    ->advanceOnSemesterActivation((int) $id, $request->user()?->user_id);
-            }
         });
 
         $semester->refresh();
-        $payload = $semester->toArray();
-        if ($promotionStats !== null) {
-            $auto = app(RegularStudentAutoPromotion::class);
-            $payload['auto_promotion'] = $promotionStats;
-            $payload['message'] = trim($semester->semester_name.' activated. '.$auto->formatSummary($promotionStats));
-        }
 
-        return response()->json($payload);
+        return response()->json($semester);
     }
 
     public function toggleSemesterStatus(Request $request, $id)
@@ -982,36 +1027,27 @@ class LookupDataController extends Controller
         $current = $this->normalizedSemesterStatus($semester->status);
         $newStatus = $current === 'active' ? 'inactive' : 'active';
 
-        $promotionStats = [
-            'promoted' => 0,
-            'skipped_irregular' => 0,
-            'skipped_incomplete' => 0,
-            'unchanged' => 0,
-        ];
-
-        DB::transaction(function () use ($semester, $id, $newStatus, $request, &$promotionStats) {
-            if ($newStatus === 'active') {
-                $this->deactivateAllSemestersExcept($id);
-            }
-            $semester->update(['status' => $newStatus]);
-
-            if ($newStatus === 'active') {
-                $promotionStats = app(RegularStudentAutoPromotion::class)
-                    ->advanceOnSemesterActivation($id, $request->user()?->user_id);
-            }
-        });
+        $promotionStats = $this->applySemesterStatusAndPromote(
+            $semester,
+            $newStatus,
+            $request->user()?->user_id
+        );
 
         $semester->refresh();
         $auto = app(RegularStudentAutoPromotion::class);
+        $message = $newStatus === 'active'
+            ? trim($semester->semester_name.' activated. '.$auto->formatSummary($promotionStats))
+            : 'Semester deactivated.';
+        if (! empty($promotionStats['promotion_error'])) {
+            $message .= ' '.$promotionStats['promotion_error'];
+        }
 
         return response()->json([
             'semester_id' => $semester->semester_id,
             'semester_name' => $semester->semester_name,
             'status' => $this->normalizedSemesterStatus($semester->status),
             'auto_promotion' => $promotionStats,
-            'message' => $newStatus === 'active'
-                ? trim($semester->semester_name.' activated. '.$auto->formatSummary($promotionStats))
-                : 'Semester deactivated.',
+            'message' => $message,
         ]);
     }
 

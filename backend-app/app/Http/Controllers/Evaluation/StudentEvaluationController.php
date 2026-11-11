@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Evaluation;
 
 use App\Http\Controllers\Controller;
 use App\Models\AcademicRecordEvaluationComplete;
+use App\Models\Campus;
 use App\Models\Curriculum;
 use App\Models\DeanProfile;
 use App\Models\Evaluation;
@@ -15,6 +16,7 @@ use App\Services\GradeScaleHelper;
 use App\Services\StudentCurriculumEvaluationBuilder;
 use App\Support\CachedSchema;
 use App\Support\EvaluationStanding;
+use App\Support\HeavyRequest;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -171,6 +173,8 @@ class StudentEvaluationController extends Controller
     public function listStudents(Request $request)
     {
         try {
+            HeavyRequest::forList();
+
             $user = $request->user();
             if (! $user) {
                 return response()->json(['message' => 'Unauthorized'], 401);
@@ -180,10 +184,15 @@ class StudentEvaluationController extends Controller
                 return response()->json(['message' => 'Forbidden'], 403);
             }
 
-            $query = StudentProfile::with([
+            $with = [
                 'program:program_id,program_name,program_code,department_id',
                 'yearLevel:year_level_id,year_level',
-            ]);
+            ];
+            $hasCampusColumn = CachedSchema::hasColumn('tbl_student_profile', 'campus_id');
+            if ($hasCampusColumn) {
+                $with[] = 'campus:campus_id,campus_name';
+            }
+            $query = StudentProfile::with($with);
 
             /** Role scope (department / assigned program / year levels) — practice students bypass it. */
             $scopeFilters = [];
@@ -240,6 +249,51 @@ class StudentEvaluationController extends Controller
                 $query->where(function ($q) use ($programId) {
                     $q->where('Current_Program', $programId)->orWhere('current_program', $programId);
                 });
+            }
+
+            // Campus / year / standing filters run in SQL so the dropdown is complete.
+            $campusFilter = trim((string) $request->query('campus_id', ''));
+            if ($hasCampusColumn) {
+                if ($campusFilter === '__unassigned__') {
+                    $query->whereNull('campus_id');
+                } elseif ($campusFilter !== '' && ctype_digit($campusFilter)) {
+                    $query->where('campus_id', (int) $campusFilter);
+                }
+            }
+
+            $yearLevelFilter = trim((string) $request->query('year_level_id', ''));
+            if ($yearLevelFilter === '__unassigned__') {
+                $query->where(function ($q) {
+                    $q->whereNull('promotion_target_year_level_id')
+                        ->where(function ($inner) {
+                            $inner->whereNull('year_level_id')->orWhere('year_level_id', '');
+                        });
+                });
+            } elseif ($yearLevelFilter !== '' && ctype_digit($yearLevelFilter)) {
+                $query->whereRaw(
+                    'COALESCE(promotion_target_year_level_id, year_level_id) = ?',
+                    [(int) $yearLevelFilter]
+                );
+            }
+
+            $standingFilter = strtolower(trim((string) $request->query('standing', '')));
+            $excludeSimulationsForStanding = in_array(
+                $standingFilter,
+                ['regular', 'irregular', 'unevaluated', 'unevaluated_irregular'],
+                true
+            );
+            if ($excludeSimulationsForStanding && CachedSchema::hasColumn('tbl_student_profile', 'is_simulation')) {
+                $query->where(function ($q) {
+                    $q->where('is_simulation', false)->orWhereNull('is_simulation');
+                });
+            }
+            if ($standingFilter === 'regular') {
+                $query->where(function ($q) {
+                    $q->whereNull('academic_status')
+                        ->orWhereRaw('LOWER(TRIM(academic_status)) <> ?', ['irregular']);
+                });
+            } elseif ($standingFilter === 'irregular' || $standingFilter === 'unevaluated_irregular') {
+                $query->whereRaw('LOWER(TRIM(academic_status)) = ?', ['irregular']);
             }
 
             $academicRecord = $request->query('academic_record', 'all');
@@ -304,46 +358,60 @@ class StudentEvaluationController extends Controller
 
             $total = (clone $query)->count();
 
-            $defaultLimit = $search !== '' ? 200 : 2000;
-            $limit = (int) $request->query('limit', $defaultLimit);
-            $limit = max(1, min(5000, $limit > 0 ? $limit : $defaultLimit));
+            // Default: return the full filtered set (no silent alphabetical truncation).
+            // Callers may still pass limit=… when they intentionally want a page size.
+            $limitRaw = $request->query('limit', null);
+            $applyLimit = $limitRaw !== null && $limitRaw !== '' && (int) $limitRaw > 0;
+            $limit = $applyLimit ? max(1, min(50000, (int) $limitRaw)) : null;
 
-            $students = $query->orderByDesc('is_simulation')
+            $ordered = $query->orderByDesc('is_simulation')
                 ->orderBy('last_name')
-                ->orderBy('first_name')
-                ->limit($limit)
-                ->get([
-                    'student_id',
-                    'student_id_number',
-                    'first_name',
-                    'middle_name',
-                    'last_name',
-                    'academic_status',
-                    'student_entry_type',
-                    'Current_Program',
-                    'year_level_id',
-                    'promotion_target_year_level_id',
-                    'promoted_next_sem_at',
-                    'is_simulation',
-                ]);
+                ->orderBy('first_name');
+            if ($limit !== null) {
+                $ordered->limit($limit);
+            }
+            $selectCols = [
+                'student_id',
+                'student_id_number',
+                'first_name',
+                'middle_name',
+                'last_name',
+                'academic_status',
+                'student_entry_type',
+                'Current_Program',
+                'year_level_id',
+                'promotion_target_year_level_id',
+                'promoted_next_sem_at',
+                'is_simulation',
+            ];
+            if ($hasCampusColumn) {
+                $selectCols[] = 'campus_id';
+            }
+            // Narrow select + raised memory (HeavyRequest::forList). Keep orderBy for UI;
+            // chunkById would rewrite sort order to student_id.
+            $students = $ordered->get($selectCols);
 
-            $studentIds = $students->pluck('student_id')->all();
+            $studentIds = $students->pluck('student_id')->map(static fn ($id) => (int) $id)->all();
             $lastCompletedByStudent = [];
             /** @var array<int, list<string|null>> */
             $completionNotesByStudent = [];
             if ($studentIds !== []) {
-                $completionRows = AcademicRecordEvaluationComplete::query()
-                    ->select('student_id', 'completed_at', 'notes')
-                    ->whereIn('student_id', $studentIds)
-                    ->orderByDesc('completed_at')
-                    ->get();
+                foreach (array_chunk($studentIds, HeavyRequest::STUDENT_CHUNK) as $idChunk) {
+                    $completionRows = AcademicRecordEvaluationComplete::query()
+                        ->select('student_id', 'completed_at', 'notes')
+                        ->whereIn('student_id', $idChunk)
+                        ->orderByDesc('completed_at')
+                        ->toBase()
+                        ->get();
 
-                foreach ($completionRows as $row) {
-                    $sid = (int) $row->student_id;
-                    if (! array_key_exists($sid, $lastCompletedByStudent)) {
-                        $lastCompletedByStudent[$sid] = $row->completed_at;
+                    foreach ($completionRows as $row) {
+                        $sid = (int) $row->student_id;
+                        if (! array_key_exists($sid, $lastCompletedByStudent)) {
+                            $lastCompletedByStudent[$sid] = $row->completed_at;
+                        }
+                        $completionNotesByStudent[$sid][] = $row->notes;
                     }
-                    $completionNotesByStudent[$sid][] = $row->notes;
+                    unset($completionRows);
                 }
             }
 
@@ -390,6 +458,8 @@ class StudentEvaluationController extends Controller
                     $effectiveYearLevelName = $extraYearNames[(int) $effectiveYearLevelId] ?? $effectiveYearLevelName;
                 }
 
+                $campus = $student->relationLoaded('campus') ? $student->campus : null;
+
                 return [
                     'student_id' => $student->student_id,
                     'student_id_number' => $student->student_id_number,
@@ -401,6 +471,13 @@ class StudentEvaluationController extends Controller
                     'student_entry_type' => $student->student_entry_type,
                     'program' => $student->program,
                     'program_name' => $student->program->program_name ?? 'N/A',
+                    'campus_id' => $campus?->campus_id ?? $student->campus_id ?? null,
+                    'campus' => $campus
+                        ? [
+                            'campus_id' => $campus->campus_id,
+                            'campus_name' => $campus->campus_name,
+                        ]
+                        : null,
                     'year_level_id' => $effectiveYearLevelId,
                     'year_level_name' => $effectiveYearLevelName,
                     'academic_record_completed_at' => $lastAt,
@@ -409,9 +486,27 @@ class StudentEvaluationController extends Controller
                 ];
             });
 
+            if ($standingFilter === 'unevaluated' || $standingFilter === 'unevaluated_irregular') {
+                $students = $students
+                    ->filter(static fn ($row) => empty($row['is_simulation']) && empty($row['academic_record_evaluated']))
+                    ->values();
+            }
+
+            $campuses = Campus::query()
+                ->orderBy('campus_name')
+                ->get(['campus_id', 'campus_name', 'status'])
+                ->map(static fn ($c) => [
+                    'campus_id' => $c->campus_id,
+                    'campus_name' => $c->campus_name,
+                    'status' => $c->status,
+                ])
+                ->values();
+
             return response()->json([
                 'students' => $students,
                 'total' => $total,
+                'filtered_total' => $students->count(),
+                'campuses' => $campuses,
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -670,9 +765,8 @@ class StudentEvaluationController extends Controller
      * Persist student standing: year level + semester.
      * Academic year is taken from the bound Curriculum header (not a separate filter).
      *
-     * Dean / Program Head / Admin may freely promote or demote Irregular students
-     * via Year + Semester (sets profile standing + promotion targets).
-     * Regular students keep the anti-demote guard after an explicit Promote.
+     * Dean / Program Head / Admin may freely promote or demote via Year + Semester
+     * (sets profile standing + promotion targets) for Regular and Irregular.
      */
     public function updateStudentStanding(Request $request)
     {
@@ -697,15 +791,17 @@ class StudentEvaluationController extends Controller
             }
 
             $builder = app(StudentCurriculumEvaluationBuilder::class);
-            $built = $builder->buildPayload($profile);
-            $computedStatus = strtolower(trim((string) ($built['computed_academic_status'] ?? '')));
-            $storedStatus = strtolower(trim((string) ($profile->academic_status ?? '')));
-            $isIrregular = $computedStatus === 'irregular' || $storedStatus === 'irregular';
 
-            $canManualIrregularStanding =
+            $canManualStanding =
                 $user->hasRole('Admin')
                 || $user->hasRole('Dean')
                 || $user->hasRole('Program Head');
+
+            if (! $canManualStanding) {
+                return response()->json([
+                    'message' => 'Only Dean, Program Head, or Admin may change Year / Semester standing.',
+                ], 403);
+            }
 
             $newY = (int) $validated['year_level_id'];
             $newS = (int) $validated['semester_id'];
@@ -718,44 +814,18 @@ class StudentEvaluationController extends Controller
                 $profile->academic_year_id = (int) $header->academic_year_id;
             }
 
-            if ($canManualIrregularStanding && $isIrregular) {
-                $profile->year_level_id = $newY;
-                $profile->semester_id = $newS;
-                $profile->promotion_target_year_level_id = $newY;
-                $profile->promotion_target_semester_id = $newS;
-                $profile->promoted_next_sem_at = $profile->promoted_next_sem_at ?? now();
-                $profile->promoted_next_sem_by = $profile->promoted_next_sem_by ?? $user->user_id;
-                // Standing moved — clear term load plan for the previous standing.
-                if ($oldY !== $newY || $oldS !== $newS) {
-                    $profile->standing_term_load = null;
-                    $profile->standing_deferred_keys = [];
-                }
-                $profile->save();
-            } else {
-                $profile->year_level_id = $newY;
-                $profile->semester_id = $newS;
-
-                // Align promotion targets with standing when advancing or when none set.
-                // Never move promotion targets (or standing) backward after an explicit Promote
-                // for Regular (or non-manual) students.
-                $curY = $profile->getOriginal('promotion_target_year_level_id');
-                $curS = $profile->getOriginal('promotion_target_semester_id');
-                $curY = $curY !== null ? (int) $curY : null;
-                $curS = $curS !== null ? (int) $curS : null;
-                $shouldUpdateTargets = true;
-                if ($profile->promoted_next_sem_at && $curY !== null && $curS !== null) {
-                    if ($newY < $curY || ($newY === $curY && $newS < $curS)) {
-                        $shouldUpdateTargets = false;
-                        $profile->year_level_id = $curY;
-                        $profile->semester_id = $curS;
-                    }
-                }
-                if ($shouldUpdateTargets) {
-                    $profile->promotion_target_year_level_id = $newY;
-                    $profile->promotion_target_semester_id = $newS;
-                }
-                $profile->save();
+            $profile->year_level_id = $newY;
+            $profile->semester_id = $newS;
+            $profile->promotion_target_year_level_id = $newY;
+            $profile->promotion_target_semester_id = $newS;
+            $profile->promoted_next_sem_at = $profile->promoted_next_sem_at ?? now();
+            $profile->promoted_next_sem_by = $profile->promoted_next_sem_by ?? $user->user_id;
+            // Standing moved — clear term load plan for the previous standing.
+            if ($oldY !== $newY || $oldS !== $newS) {
+                $profile->standing_term_load = null;
+                $profile->standing_deferred_keys = [];
             }
+            $profile->save();
 
             $fresh = StudentProfile::where('student_id', $profile->student_id)
                 ->with(['program', 'track', 'previousProgram', 'yearLevel', 'semester', 'academicYear'])
@@ -763,9 +833,7 @@ class StudentEvaluationController extends Controller
             $payload = $builder->buildPayload($fresh);
 
             return response()->json([
-                'message' => ($canManualIrregularStanding && $isIrregular)
-                    ? 'Irregular student standing updated (promote/demote).'
-                    : 'Student standing updated.',
+                'message' => 'Student standing updated (promote/demote).',
                 'student' => $payload['student'],
                 'curriculum' => $payload['curriculum'] ?? null,
             ]);
@@ -774,6 +842,88 @@ class StudentEvaluationController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'error' => 'Failed to update student standing',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Assign / change a student's home campus (Lookup → Campus list).
+     * Dean / Program Head / Admin only. Clears when campus_id is null.
+     */
+    public function updateStudentCampus(Request $request)
+    {
+        try {
+            $user = $request->user();
+            if (! $user) {
+                return response()->json(['message' => 'Unauthorized'], 401);
+            }
+
+            $canManual =
+                $user->hasRole('Admin')
+                || $user->hasRole('Dean')
+                || $user->hasRole('Program Head');
+            if (! $canManual) {
+                return response()->json([
+                    'message' => 'Only Dean, Program Head, or Admin may assign campus.',
+                ], 403);
+            }
+
+            if (! CachedSchema::hasColumn('tbl_student_profile', 'campus_id')) {
+                return response()->json([
+                    'message' => 'Campus column is not available on student profiles yet.',
+                ], 422);
+            }
+
+            $validated = $request->validate([
+                'student_id' => 'required|integer|exists:tbl_student_profile,student_id',
+                'campus_id' => 'nullable|integer|exists:tbl_campus,campus_id',
+            ]);
+
+            $profile = StudentProfile::where('student_id', $validated['student_id'])
+                ->with(['program', 'track', 'previousProgram', 'yearLevel', 'semester', 'academicYear', 'campus'])
+                ->firstOrFail();
+
+            if ($denied = $this->gateStaffStudentEvaluation($user, $profile, null, true)) {
+                return $denied;
+            }
+
+            $campusId = array_key_exists('campus_id', $validated) && $validated['campus_id'] !== null
+                ? (int) $validated['campus_id']
+                : null;
+
+            if ($campusId !== null) {
+                $campus = Campus::query()->find($campusId);
+                if (! $campus) {
+                    return response()->json(['message' => 'Campus not found.'], 404);
+                }
+                $status = strtolower(trim((string) ($campus->status ?? 'active')));
+                if ($status === 'inactive') {
+                    return response()->json(['message' => 'Cannot assign an inactive campus.'], 422);
+                }
+            }
+
+            $profile->campus_id = $campusId;
+            $profile->save();
+
+            $fresh = StudentProfile::where('student_id', $profile->student_id)
+                ->with(['program', 'track', 'previousProgram', 'yearLevel', 'semester', 'academicYear', 'campus'])
+                ->firstOrFail();
+            $payload = app(StudentCurriculumEvaluationBuilder::class)->buildPayload($fresh);
+
+            $campusName = $fresh->campus?->campus_name;
+
+            return response()->json([
+                'message' => $campusId
+                    ? 'Campus assigned: '.($campusName ?: 'Campus #'.$campusId)
+                    : 'Campus cleared.',
+                'student' => $payload['student'],
+            ]);
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Failed to update student campus',
                 'message' => $e->getMessage(),
             ], 500);
         }

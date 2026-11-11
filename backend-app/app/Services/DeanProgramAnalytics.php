@@ -14,6 +14,7 @@ use App\Models\YearLevel;
 use App\Support\CachedSchema;
 use App\Support\EvaluationAttemptPicker;
 use App\Support\EvaluationStanding;
+use App\Support\HeavyRequest;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -31,7 +32,8 @@ class DeanProgramAnalytics
 
     private const TREND_YEARS = 6;
 
-    private const LIST_LIMIT = 100;
+    /** Process this many students at a time so grade rows are not all held in memory. */
+    private const STUDENT_CHUNK = HeavyRequest::STUDENT_CHUNK;
 
     /** @var array<string, array{rows: list<array<string, mixed>>, subject_years: array<int, int>, subjects: array<int, array>}> */
     private array $templates = [];
@@ -69,11 +71,7 @@ class DeanProgramAnalytics
         $yearLabels = YearLevel::query()->orderBy('year_level_id')->pluck('year_level', 'year_level_id')
             ->map(static fn ($l) => (string) $l)->all();
 
-        $students = $this->studentsForProgram($programId);
-        $studentIds = $students->pluck('student_id')->map(static fn ($id) => (int) $id)->all();
-        $attemptsByStudent = $this->evaluationsByStudent($studentIds);
-        $creditsByStudent = $this->transferCreditsByStudent($studentIds);
-        $completionsByStudent = $this->completionsByStudent($studentIds, $activeAyId, $activeSemId);
+        $studentIds = $this->studentIdsForProgram($programId);
 
         $upperKey = $semId > 0 ? $this->termKey($ayStart, $ayId, $semId) : (($ayStart[$ayId] ?? 0) * 10 + 9);
         $activeStart = $ayStart[$activeAyId] ?? 0;
@@ -88,121 +86,131 @@ class DeanProgramAnalytics
         $trend = array_fill_keys($trendIds, []);
         $failedStudents = [];
 
-        foreach ($students as $profile) {
-            $sid = (int) $profile->student_id;
-            $header = $this->builder->resolveCurriculumHeaderForStudent($profile);
-            $template = $this->curriculumTemplate($programId, $header?->curriculum_header_id);
-            $attempts = $attemptsByStudent[$sid] ?? [];
-            $profileYear = (int) (EvaluationStanding::effectiveYearLevelId($profile) ?? 0);
+        // Chunk so every student is still counted, without loading the whole program's grades at once.
+        foreach (array_chunk($studentIds, self::STUDENT_CHUNK) as $idChunk) {
+            $students = $this->studentsByIds($idChunk);
+            $attemptsByStudent = $this->evaluationsByStudent($idChunk);
+            $creditsByStudent = $this->transferCreditsByStudent($idChunk);
+            $completionsByStudent = $this->completionsByStudent($idChunk, $activeAyId, $activeSemId);
 
-            foreach ($trendIds as $tAy) {
-                $rows = array_filter($attempts, static fn ($a) => (int) $a->academic_year_id === $tAy);
-                if ($rows === [] && $tAy !== $activeAyId) {
-                    continue;
-                }
-                $y = $tAy === $activeAyId
-                    ? $profileYear
-                    : $this->yearInTerm($rows, $template, $profileYear, $activeStart - ($ayStart[$tAy] ?? $activeStart));
-                if ($y > 0 && $inScope($y) && (! $yearFilter || $y === $yearFilter)) {
-                    $trend[$tAy][$y] = ($trend[$tAy][$y] ?? 0) + 1;
-                }
-            }
+            foreach ($students as $profile) {
+                $sid = (int) $profile->student_id;
+                $header = $this->builder->resolveCurriculumHeaderForStudent($profile);
+                $template = $this->curriculumTemplate($programId, $header?->curriculum_header_id);
+                $attempts = $attemptsByStudent[$sid] ?? [];
+                $profileYear = (int) (EvaluationStanding::effectiveYearLevelId($profile) ?? 0);
 
-            $termAttempts = array_values(array_filter(
-                $attempts,
-                static fn ($a) => (int) $a->academic_year_id === $ayId && ($semId === 0 || (int) $a->semester_id === $semId)
-            ));
-            if ($termAttempts === [] && ! $isCurrentTerm) {
-                continue;
-            }
-            $year = $isCurrentTerm
-                ? $profileYear
-                : $this->yearInTerm($termAttempts, $template, $profileYear, $activeStart - ($ayStart[$ayId] ?? $activeStart));
-            if ($year <= 0 || ! $inScope($year) || ($yearFilter && $year !== $yearFilter)) {
-                continue;
-            }
-
-            $population[$year] = ($population[$year] ?? 0) + 1;
-
-            $asOf = array_filter(
-                $attempts,
-                fn ($a) => $a->academic_year_id === null || $this->termKey($ayStart, (int) $a->academic_year_id, (int) $a->semester_id) <= $upperKey
-            );
-            $classified = $this->classify($template, $asOf, $creditsByStudent[$sid] ?? [], $ayStart);
-            $completions = $completionsByStudent[$sid] ?? [];
-
-            // Current term: the saved standing the Student evaluation list filters on.
-            // Past terms: rebuilt from the grades and completions recorded in that term.
-            if ($isCurrentTerm) {
-                $classified['status'] = EvaluationStanding::isIrregular($profile) ? 'Irregular' : 'Regular';
-                $evaluated = EvaluationStanding::evaluatedState(
-                    $classified['status'] === 'Irregular',
-                    array_column($completions, 'notes'),
-                    $profile->promoted_next_sem_at
-                );
-            } else {
-                $evaluated = null;
-                foreach ($completions as $c) {
-                    if ($c['ay'] === $ayId && ($semId === 0 || $c['sem'] === $semId)) {
-                        $evaluated = $evaluated === 'manual' || ! $c['auto'] ? 'manual' : 'auto';
+                foreach ($trendIds as $tAy) {
+                    $rows = array_filter($attempts, static fn ($a) => (int) $a->academic_year_id === $tAy);
+                    if ($rows === [] && $tAy !== $activeAyId) {
+                        continue;
+                    }
+                    $y = $tAy === $activeAyId
+                        ? $profileYear
+                        : $this->yearInTerm($rows, $template, $profileYear, $activeStart - ($ayStart[$tAy] ?? $activeStart));
+                    if ($y > 0 && $inScope($y) && (! $yearFilter || $y === $yearFilter)) {
+                        $trend[$tAy][$y] = ($trend[$tAy][$y] ?? 0) + 1;
                     }
                 }
-            }
-            $evaluation[$year][$evaluated ?? 'unevaluated'] = ($evaluation[$year][$evaluated ?? 'unevaluated'] ?? 0) + 1;
 
-            if ($classified['status'] === 'Irregular') {
-                $reason = $classified['failed'] ? 'failed_subject' : 'sequence_gap';
-                $status[$year]['irregular'] = ($status[$year]['irregular'] ?? 0) + 1;
-                $status[$year][$reason] = ($status[$year][$reason] ?? 0) + 1;
-            } else {
-                $status[$year]['regular'] = ($status[$year]['regular'] ?? 0) + 1;
-            }
-
-            $bySubject = [];
-            foreach ($termAttempts as $a) {
-                if ($a->subject_id !== null) {
-                    $bySubject[(int) $a->subject_id][] = $a;
-                }
-            }
-            $studentFailed = 0;
-            foreach ($bySubject as $subjectId => $list) {
-                $best = EvaluationAttemptPicker::prefer($list, $ayStart);
-                $st = strtolower(trim((string) ($best->evaluation_status ?? '')));
-                if (in_array($st, ['credit', 'credited'], true)) {
+                $termAttempts = array_values(array_filter(
+                    $attempts,
+                    static fn ($a) => (int) $a->academic_year_id === $ayId && ($semId === 0 || (int) $a->semester_id === $semId)
+                ));
+                if ($termAttempts === [] && ! $isCurrentTerm) {
                     continue;
                 }
-                $passing = $template['passing'][$subjectId] ?? null;
-                $outcome = $this->outcome($best, $passing);
-                if (! in_array($outcome, ['passed', 'failed', 'inc', 'dropped'], true)) {
+                $year = $isCurrentTerm
+                    ? $profileYear
+                    : $this->yearInTerm($termAttempts, $template, $profileYear, $activeStart - ($ayStart[$ayId] ?? $activeStart));
+                if ($year <= 0 || ! $inScope($year) || ($yearFilter && $year !== $yearFilter)) {
                     continue;
                 }
-                $s = &$subjectStats[$subjectId];
-                $s ??= ['enrolled' => 0, 'passed' => 0, 'failed' => 0, 'inc' => 0, 'dropped' => 0, 'grade_sum' => 0.0, 'grade_n' => 0, 'students' => []];
-                $s['enrolled']++;
-                $s[$outcome]++;
-                $sis = $this->sisGrade($best->grade, $passing);
-                if ($sis !== null) {
-                    $s['grade_sum'] += $sis;
-                    $s['grade_n']++;
+
+                $population[$year] = ($population[$year] ?? 0) + 1;
+
+                $asOf = array_filter(
+                    $attempts,
+                    fn ($a) => $a->academic_year_id === null || $this->termKey($ayStart, (int) $a->academic_year_id, (int) $a->semester_id) <= $upperKey
+                );
+                $classified = $this->classify($template, $asOf, $creditsByStudent[$sid] ?? [], $ayStart);
+                $completions = $completionsByStudent[$sid] ?? [];
+
+                // Current term: the saved standing the Student evaluation list filters on.
+                // Past terms: rebuilt from the grades and completions recorded in that term.
+                if ($isCurrentTerm) {
+                    $classified['status'] = EvaluationStanding::isIrregular($profile) ? 'Irregular' : 'Regular';
+                    $evaluated = EvaluationStanding::evaluatedState(
+                        $classified['status'] === 'Irregular',
+                        array_column($completions, 'notes'),
+                        $profile->promoted_next_sem_at
+                    );
+                } else {
+                    $evaluated = null;
+                    foreach ($completions as $c) {
+                        if ($c['ay'] === $ayId && ($semId === 0 || $c['sem'] === $semId)) {
+                            $evaluated = $evaluated === 'manual' || ! $c['auto'] ? 'manual' : 'auto';
+                        }
+                    }
                 }
-                if ($outcome !== 'passed' && count($s['students']) < self::LIST_LIMIT) {
-                    $s['students'][] = $this->studentSummary($profile, $year) + [
-                        'outcome' => $outcome,
-                        'grade' => $this->grades->cleanGrade($best->grade),
+                $evaluation[$year][$evaluated ?? 'unevaluated'] = ($evaluation[$year][$evaluated ?? 'unevaluated'] ?? 0) + 1;
+
+                if ($classified['status'] === 'Irregular') {
+                    $reason = $classified['failed'] ? 'failed_subject' : 'sequence_gap';
+                    $status[$year]['irregular'] = ($status[$year]['irregular'] ?? 0) + 1;
+                    $status[$year][$reason] = ($status[$year][$reason] ?? 0) + 1;
+                } else {
+                    $status[$year]['regular'] = ($status[$year]['regular'] ?? 0) + 1;
+                }
+
+                $bySubject = [];
+                foreach ($termAttempts as $a) {
+                    if ($a->subject_id !== null) {
+                        $bySubject[(int) $a->subject_id][] = $a;
+                    }
+                }
+                $studentFailed = 0;
+                foreach ($bySubject as $subjectId => $list) {
+                    $best = EvaluationAttemptPicker::prefer($list, $ayStart);
+                    $st = strtolower(trim((string) ($best->evaluation_status ?? '')));
+                    if (in_array($st, ['credit', 'credited'], true)) {
+                        continue;
+                    }
+                    $passing = $template['passing'][$subjectId] ?? null;
+                    $outcome = $this->outcome($best, $passing);
+                    if (! in_array($outcome, ['passed', 'failed', 'inc', 'dropped'], true)) {
+                        continue;
+                    }
+                    $s = &$subjectStats[$subjectId];
+                    $s ??= ['enrolled' => 0, 'passed' => 0, 'failed' => 0, 'inc' => 0, 'dropped' => 0, 'grade_sum' => 0.0, 'grade_n' => 0, 'students' => []];
+                    $s['enrolled']++;
+                    $s[$outcome]++;
+                    $sis = $this->sisGrade($best->grade, $passing);
+                    if ($sis !== null) {
+                        $s['grade_sum'] += $sis;
+                        $s['grade_n']++;
+                    }
+                    if ($outcome !== 'passed') {
+                        $s['students'][] = $this->studentSummary($profile, $year) + [
+                            'outcome' => $outcome,
+                            'grade' => $this->grades->cleanGrade($best->grade),
+                        ];
+                    }
+                    unset($s);
+                    $gradeCounts[$this->gradeBucket($outcome, $sis)]++;
+                    if ($outcome !== 'passed') {
+                        $studentFailed++;
+                    }
+                }
+                if ($studentFailed > 0) {
+                    $failedStudents[] = $this->studentSummary($profile, $year) + [
+                        'not_passed' => $studentFailed,
+                        'status' => $classified['status'],
                     ];
                 }
-                unset($s);
-                $gradeCounts[$this->gradeBucket($outcome, $sis)]++;
-                if ($outcome !== 'passed') {
-                    $studentFailed++;
-                }
             }
-            if ($studentFailed > 0) {
-                $failedStudents[] = $this->studentSummary($profile, $year) + [
-                    'not_passed' => $studentFailed,
-                    'status' => $classified['status'],
-                ];
-            }
+
+            unset($students, $attemptsByStudent, $creditsByStudent, $completionsByStudent);
         }
 
         $years = $this->yearBuckets($population, $yearLabels, $yearFilter);
@@ -252,7 +260,7 @@ class DeanProgramAnalytics
                 static fn ($label) => ['label' => $label, 'count' => $gradeCounts[$label]],
                 self::GRADE_BUCKETS
             ),
-            'students_not_passing' => array_slice($failedStudents, 0, self::LIST_LIMIT),
+            'students_not_passing' => $failedStudents,
             'trend' => array_map(fn ($tAy) => ['academic_year_id' => $tAy, 'label' => $ayName($tAy)]
                 + $this->trendRow($trend[$tAy], $years), $trendIds),
         ];
@@ -266,8 +274,8 @@ class DeanProgramAnalytics
     // Data loading
     // ---------------------------------------------------------------------
 
-    /** @return Collection<int, StudentProfile> */
-    private function studentsForProgram(int $programId): Collection
+    /** @return list<int> */
+    private function studentIdsForProgram(int $programId): array
     {
         $query = StudentProfile::query()->where(function ($q) use ($programId) {
             $q->where('Current_Program', $programId)->orWhere('current_program', $programId);
@@ -278,25 +286,64 @@ class DeanProgramAnalytics
             });
         }
 
-        return $query->orderBy('student_id')->get();
+        return $query->orderBy('student_id')->pluck('student_id')->map(static fn ($id) => (int) $id)->all();
     }
 
     /**
      * @param  list<int>  $studentIds
-     * @return array<int, list<Evaluation>>
+     * @return Collection<int, StudentProfile>
+     */
+    private function studentsByIds(array $studentIds): Collection
+    {
+        if ($studentIds === []) {
+            return collect();
+        }
+
+        return StudentProfile::query()
+            ->whereIn('student_id', $studentIds)
+            ->orderBy('student_id')
+            ->get([
+                'student_id',
+                'student_id_number',
+                'first_name',
+                'middle_name',
+                'last_name',
+                'academic_status',
+                'year_level_id',
+                'promotion_target_year_level_id',
+                'promoted_next_sem_at',
+                'Current_Program',
+                'academic_year_id',
+            ]);
+    }
+
+    /**
+     * Lightweight grade rows (stdClass) — Eloquent models blow memory on bulk programs.
+     *
+     * @param  list<int>  $studentIds
+     * @return array<int, list<object>>
      */
     private function evaluationsByStudent(array $studentIds): array
     {
         $out = [];
-        foreach (array_chunk($studentIds, 800) as $chunk) {
-            $rows = Evaluation::query()
-                ->whereIn('student_id', $chunk)
-                ->get(['evaluation_id', 'student_id', 'subject_id', 'grade', 'evaluation_status', 'academic_year_id', 'semester_id']);
-            foreach ($rows as $row) {
-                if ($row->subject_id !== null) {
-                    $out[(int) $row->student_id][] = $row;
-                }
-            }
+        if ($studentIds === []) {
+            return $out;
+        }
+
+        $rows = DB::table('tbl_evaluation')
+            ->whereIn('student_id', $studentIds)
+            ->whereNotNull('subject_id')
+            ->get([
+                'evaluation_id',
+                'student_id',
+                'subject_id',
+                'grade',
+                'evaluation_status',
+                'academic_year_id',
+                'semester_id',
+            ]);
+        foreach ($rows as $row) {
+            $out[(int) $row->student_id][] = $row;
         }
 
         return $out;

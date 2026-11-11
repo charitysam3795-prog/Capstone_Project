@@ -15,6 +15,7 @@ use App\Models\YearLevel;
 use App\Services\DeanProgramAnalytics;
 use App\Services\RegularStudentAutoPromotion;
 use App\Support\CachedSchema;
+use App\Support\HeavyRequest;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -446,13 +447,14 @@ class EvaluationReportController extends Controller
         if ($resp = $this->assertEvaluationAccess($request)) {
             return $resp;
         }
+        HeavyRequest::forAnalytics();
         $user = $request->user();
 
         $fails = [];
 
         $this->evaluationQuery($request, $user)
             ->whereNotNull('subject_id')
-            ->chunkById(500, function ($rows) use (&$fails) {
+            ->chunkById(HeavyRequest::STUDENT_CHUNK, function ($rows) use (&$fails) {
                 foreach ($rows as $row) {
                     if (! $this->rowFailed($row->evaluation_status, $row->grade)) {
                         continue;
@@ -515,6 +517,7 @@ class EvaluationReportController extends Controller
         if ($resp = $this->assertEvaluationAccess($request)) {
             return $resp;
         }
+        HeavyRequest::forAnalytics();
         $user = $request->user();
         if (! $user->isEvaluatorLike()) {
             return response()->json(['message' => 'Forbidden'], 403);
@@ -578,22 +581,7 @@ class EvaluationReportController extends Controller
             ]);
         }
 
-        $evaluatedIds = AcademicRecordEvaluationComplete::query()
-            ->whereIn('student_id', (clone $studentBase)->select('student_id'))
-            ->where(function ($q) {
-                $q->whereNull('notes')
-                    ->orWhere('notes', '')
-                    ->orWhere('notes', 'like', '%Irregular manual promotion%')
-                    ->orWhere(function ($inner) {
-                        $inner->where('notes', 'not like', '%Auto-promoted on semester activation%')
-                            ->where('notes', 'not like', '%Semester promotion%');
-                    });
-            })
-            ->distinct()
-            ->pluck('student_id')
-            ->map(fn ($id) => (int) $id)
-            ->all();
-        $evaluatedSet = array_fill_keys($evaluatedIds, true);
+        $evaluatedSet = $this->manualEvaluatedStudentIdSet($studentBase);
 
         $byYear = $this->buildUnevaluatedByYear($studentBase, $yearBuckets, $evaluatedSet);
 
@@ -725,13 +713,17 @@ class EvaluationReportController extends Controller
         $allowedYears = $user->hasRole('Dean') ? null : $user->effectiveEvaluationYearLevelIds();
 
         // Not cached: counts must match the Student evaluation list right after each evaluation.
-        @set_time_limit(120);
+        // Chunked aggregation in DeanProgramAnalytics — no student-count caps.
+        HeavyRequest::forAnalytics();
         try {
             $data = $analytics->build($program, $ayId, $semId, $yearId, $allowedYears);
         } catch (\Throwable $e) {
             report($e);
 
-            return response()->json(['message' => 'Could not compute program analytics.'], 500);
+            return response()->json([
+                'message' => 'Could not compute program analytics.',
+                'detail' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
         }
 
         return response()->json($meta + $data);
@@ -746,6 +738,7 @@ class EvaluationReportController extends Controller
         if ($resp = $this->assertEvaluationAccess($request)) {
             return $resp;
         }
+        HeavyRequest::forAnalytics();
         $user = $request->user();
 
         $programs = $this->programsInDeanScope($request, $user);
@@ -802,22 +795,7 @@ class EvaluationReportController extends Controller
             });
         }
 
-        $evaluatedIds = AcademicRecordEvaluationComplete::query()
-            ->whereIn('student_id', (clone $studentBase)->select('student_id'))
-            ->where(function ($q) {
-                $q->whereNull('notes')
-                    ->orWhere('notes', '')
-                    ->orWhere('notes', 'like', '%Irregular manual promotion%')
-                    ->orWhere(function ($inner) {
-                        $inner->where('notes', 'not like', '%Auto-promoted on semester activation%')
-                            ->where('notes', 'not like', '%Semester promotion%');
-                    });
-            })
-            ->distinct()
-            ->pluck('student_id')
-            ->map(fn ($id) => (int) $id)
-            ->all();
-        $evaluatedSet = array_fill_keys($evaluatedIds, true);
+        $evaluatedSet = $this->manualEvaluatedStudentIdSet($studentBase);
 
         // 1) Workload Mon–Fri (current week + today)
         $workload = $this->buildWorkloadSection($studentBase, $program);
@@ -931,6 +909,36 @@ class EvaluationReportController extends Controller
             ])
             ->values()
             ->all();
+    }
+
+    /**
+     * Manual evaluation completion markers for students in scope (chunked; grows with volume).
+     *
+     * @return array<int, true>
+     */
+    private function manualEvaluatedStudentIdSet(Builder $studentBase): array
+    {
+        $evaluatedSet = [];
+        AcademicRecordEvaluationComplete::query()
+            ->whereIn('student_id', (clone $studentBase)->select('student_id'))
+            ->where(function ($q) {
+                $q->whereNull('notes')
+                    ->orWhere('notes', '')
+                    ->orWhere('notes', 'like', '%Irregular manual promotion%')
+                    ->orWhere(function ($inner) {
+                        $inner->where('notes', 'not like', '%Auto-promoted on semester activation%')
+                            ->where('notes', 'not like', '%Semester promotion%');
+                    });
+            })
+            ->select('student_id')
+            ->orderBy('student_id')
+            ->chunkById(HeavyRequest::STUDENT_CHUNK, function ($rows) use (&$evaluatedSet) {
+                foreach ($rows as $row) {
+                    $evaluatedSet[(int) $row->student_id] = true;
+                }
+            }, 'student_id');
+
+        return $evaluatedSet;
     }
 
     private function previousAcademicYearId($academicYears, int $thisAyId): int
@@ -1089,15 +1097,6 @@ class EvaluationReportController extends Controller
     private function buildUnevaluatedByYear(Builder $studentBase, array $yearBuckets, array $evaluatedSet): array
     {
         $classifier = app(RegularStudentAutoPromotion::class);
-        $students = (clone $studentBase)
-            ->select([
-                'student_id',
-                'year_level_id',
-                'promotion_target_year_level_id',
-                'academic_status',
-                'promoted_next_sem_at',
-            ])
-            ->get();
 
         $totals = [];
         $uneval = [];
@@ -1115,42 +1114,62 @@ class EvaluationReportController extends Controller
             $incomplete[$yl] = 0;
         }
 
-        foreach ($students as $stu) {
-            $yl = (int) ($stu->promotion_target_year_level_id ?: $stu->year_level_id ?: 0);
-            if (! array_key_exists($yl, $totals)) {
-                continue;
-            }
-            $totals[$yl]++;
-            try {
-                $bucket = $classifier->classifyForAnalytics($stu);
-            } catch (\Throwable $e) {
-                $uneval[$yl]++;
+        (clone $studentBase)
+            ->select([
+                'student_id',
+                'year_level_id',
+                'promotion_target_year_level_id',
+                'academic_status',
+                'promoted_next_sem_at',
+            ])
+            ->orderBy('student_id')
+            ->chunkById(HeavyRequest::STUDENT_CHUNK, function ($students) use (
+                $classifier,
+                $evaluatedSet,
+                &$totals,
+                &$uneval,
+                &$auto,
+                &$promoted,
+                &$manual,
+                &$incomplete
+            ) {
+                foreach ($students as $stu) {
+                    $yl = (int) ($stu->promotion_target_year_level_id ?: $stu->year_level_id ?: 0);
+                    if (! array_key_exists($yl, $totals)) {
+                        continue;
+                    }
+                    $totals[$yl]++;
+                    try {
+                        $bucket = $classifier->classifyForAnalytics($stu);
+                    } catch (\Throwable $e) {
+                        $uneval[$yl]++;
 
-                continue;
-            }
-            $hasManual = isset($evaluatedSet[(int) $stu->student_id]);
+                        continue;
+                    }
+                    $hasManual = isset($evaluatedSet[(int) $stu->student_id]);
 
-            if ($bucket['auto_promoted']) {
-                $promoted[$yl]++;
-            }
-            if ($bucket['auto_evaluated']) {
-                $auto[$yl]++;
+                    if ($bucket['auto_promoted']) {
+                        $promoted[$yl]++;
+                    }
+                    if ($bucket['auto_evaluated']) {
+                        $auto[$yl]++;
 
-                continue;
-            }
-            if ($hasManual) {
-                $manual[$yl]++;
+                        continue;
+                    }
+                    if ($hasManual) {
+                        $manual[$yl]++;
 
-                continue;
-            }
-            if ($bucket['is_irregular']) {
-                $uneval[$yl]++;
+                        continue;
+                    }
+                    if ($bucket['is_irregular']) {
+                        $uneval[$yl]++;
 
-                continue;
-            }
-            $incomplete[$yl]++;
-            $uneval[$yl]++;
-        }
+                        continue;
+                    }
+                    $incomplete[$yl]++;
+                    $uneval[$yl]++;
+                }
+            }, 'student_id');
 
         $series = [];
         $maxUneval = 0;
